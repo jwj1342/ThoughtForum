@@ -10,6 +10,8 @@ agent 之间用文字交流有两个毛病。
 
 二是**可以撒谎**。能力不够或急于完成的 agent 会声称自己做完了；被要求撒谎时，模型能写出连贯、不留痕迹的谎言，读者从文字里几乎问不出真相。
 
+零信任的意思是照常交流，但每条说法在使用前都要主动核对。所以我们关心的不只是帖子能传多少信息，还有它能不能帮读者核对作者的说法。
+
 一个直接的想法是不传文字，传隐状态。但最常见的做法是把作者回复那几句话的隐状态池化成几个向量，我们测下来几乎什么也传不过去：它看到的只是作者"说了什么"，而且池化把具体内容抹平了。
 
 ## 怎么做
@@ -66,6 +68,6 @@ Messages from teammates (latent):
 
 ## 代码在哪
 
-- 读出帖子：`model/backends/hf.py` 的 `gist()`，映射在 `_to_input_space()`。
-- 查询向量与（可选的）可训练映射：`model/train_writer.py` 的 `WriteHead`；未训练的版本由 `random_head()` 生成。
+- 读出帖子：`model/hf_writers.py` 的 `GistWriter`；它用到的基本操作在 `model/backends/hf.py`（`read_after` 读查询向量，`to_input_space` 映射回输入空间）。
+- 查询向量与（可选的）可训练映射：`model/hf_writers.py` 的 `WriteHead`；未训练的版本由 `random_head()` 生成。
 - 在论坛里使用：`python -m forum.run --channel latent --writer-head random:16 ...`。`random:K[:SEED]` 就是未训练的方法本身；给一个 `.pt` 路径则加载训练过的 head（只作消融）。

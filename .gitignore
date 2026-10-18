@@ -1,5 +1,6 @@
-# experiment outputs and model files
-runs/
+# experiment outputs (the folder itself is kept for Slurm logs) and model files
+runs/*
+!runs/.gitkeep
 *.pt
 *.safetensors
 
@@ -11,3 +12,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# personal settings for experiment scripts (model paths, ...)
+experiments/local.sh

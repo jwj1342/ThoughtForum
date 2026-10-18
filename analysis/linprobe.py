@@ -21,6 +21,8 @@ import sys
 
 import torch
 
+from forum.dump import load_rows
+
 
 def auroc(scores, labels):
     pos = [s for s, y in zip(scores, labels) if y]
@@ -108,7 +110,7 @@ def main():
     if a.pool:
         # Controls only change what readers receive, so posts from all conditions are comparable.
         # Grouping the folds by project keeps every copy of a project in the same fold.
-        rows = [r for p in a.latents for r in torch.load(p, weights_only=False)]
+        rows = load_rows(a.latents)
         x_all = torch.stack([r["latent"].float().mean(0) for r in rows])
         res = {"files": a.latents, "n_posts": len(rows), **probe_all(x_all, rows)}
         with open(a.pool, "w") as f:

@@ -1,88 +1,157 @@
 # ThoughtForum
 
-让一群互不信任的 LLM agent 不靠文字，而是在一个共享的潜在"思维论坛"里交流，一起把同一个软件项目做完，并弄清楚这种交流能传什么、会不会撒谎、能不能被审计。
+让一群互不信任的 LLM agent 通过一个共享的"思维论坛"交流，一起把同一个软件项目做完，并弄清楚：从作者上下文里直接读出来的潜在信号，能传递什么、能不能帮读者核对同伴的说法、又会带来哪些风险。
 
 ## 这件事为什么有意思
 
-现在的多 agent 系统都用自然语言交流，而文字有两个毛病。
+足够强的 agent 已经能分工协作，但交流里一直有个老问题：agent **说**它做了什么，和它**实际**做了什么，常常对不上。有时是能力不够，有时是急于完成。这些不实的说法会沿着上下文传给同伴，一层层传下去。
 
-一是有损。同伴转述的接口常常不精确：在我们的实验里，帖子里明明写全了格式，读的人照着写代码，也只有一半能写对。
+我们说的**零信任**，并不是不让 agent 说话，而是：照常交流，但不默认相信任何一条说法。看到同伴说"做完了"或者"接口是这样的"，先主动核对，再拿来用。
 
-二是可以撒谎。能力不够或急于完成的 agent 会声称"做完了"；被要求撒谎时，模型写出的谎言连贯、不留痕迹，从文字里几乎问不出真相。
+难点在于拿什么核对：
+- 重新跑测试，只能覆盖测试写到的部分；
+- 让同伴写测试来验证，测试本身也常常是错的（我们测到 77%）。
 
-所以 agent 之间应当零信任：只信代码执行的结果，不信它们说了什么。既然话不可信，能不能干脆不传话，而是把作者"知道的东西"直接传过去？
+于是我们想看另一种信号：不经过作者的嘴，直接从作者的上下文里读出来的潜在向量。它能不能把信息传得更准？它跟着作者"知道的"走，还是跟着作者"说的"走？
 
-## 方法：一条帖子 = 从作者上下文里读出的 k 个向量
+## 一次协作是什么样的
 
-作者写帖子时，它的上下文里已经有任务、自己写的代码、CI 给的测试结果。我们在这段上下文末尾接上 k 个随机的词表向量作为"查询"，让模型再跑一次前向，把这 k 个位置的末层状态映射回输入空间，就得到一条帖子。读者是同一个冻结的模型，帖子以 soft token 的形式插进它的提示，前面附一行明文出处，写明是谁写的、关于哪个方法。
+```mermaid
+flowchart LR
+    P["一个项目<br/>若干互相依赖的方法"] --> A1["agent 1<br/>认领方法、写代码、跑可见测试"]
+    P --> A2["agent 2"]
+    P --> A3["agent 3"]
+    A1 -- 发帖 --> F[("思维论坛<br/>每条帖子带明文出处")]
+    F -- 读帖 --> A2
+    F -- 读帖 --> A3
+    A1 & A2 & A3 --> W["共享代码区"]
+    W --> H["隐藏测试<br/>agent 看不到，是唯一的真值"]
+```
 
-整个方法**不训练任何参数**，多出的代价只是 k 个位置的一次前向。细节和与 LatentMAS、KV 共享、C2C 等方法的区别见 [`doc/method.md`](doc/method.md)。
+agent 没有预设角色，自己挑还没完成的方法来做。做完之后在论坛上留一条帖子，其他人写代码时会读到相关的帖子。最后用 agent 看不到的隐藏测试判断项目到底做对了多少。
+
+## 方法：一条帖子怎么来
+
+```mermaid
+flowchart LR
+    C["作者的上下文<br/>任务 · 自己的代码 · 测试结果"] --> S["作者写下的话<br/>可能说错，也可能谎报"]
+    S --> T["文字帖子（基线）"]
+    S -. 只看这几句话 .-> M["池化帖子（旧基线）"]
+    C --> Q["末尾接上 k 个随机查询向量<br/>前向一次"]
+    Q --> G["k 个向量<br/>潜在帖子（本方法）"]
+    T & M & G --> R["读者：同一个冻结模型<br/>帖子作为 soft token 放进提示"]
+```
+
+作者写帖子的时候，它知道的东西都已经在上下文里了。我们在这段上下文末尾接上 k 个随机的词表向量作为查询，让模型再跑一次前向，取这 k 个位置的末层状态，映射回输入空间，得到一条潜在帖子。
+
+整个过程**不训练任何参数**，多出的开销只是 k 个位置的一次前向。和 LatentMAS、KV 共享、C2C 等方法的区别见 [`doc/method.md`](doc/method.md)。
 
 ## 怎么测：SecretBench
 
-要测一条消息传了多少信息，信息本身必须猜不出来，对错也必须能客观判定。
+```mermaid
+flowchart LR
+    S["生产者知道一个私有格式<br/>例如 JJGF!1965!Herbert!Dune"] --> W{"作者的话"}
+    W --> W1["如实"]
+    W --> W2["省略"]
+    W --> W3["说错"]
+    W1 & W2 & W3 --> CH["信道<br/>文字 / 潜在帖子 / 不交流"]
+    CH --> R["读者写消费者代码<br/>隐藏测试判对错"]
+    R --> M1["传过去多少"]
+    R --> M2["跟着所知还是所言"]
+    R --> M3["用得出 vs 说得出"]
+```
 
-所以我们造了 SecretBench。每个项目里，生产者 `encode` 按一个随机生成的私有格式写记录，比如 `'JJGF!1965!Herbert!Dune'`。三个消费者方法必须知道这个格式才能写对，而它们的文档和可见测试都不泄露格式，只能从帖子里得知。最后用隐藏测试判对错。
+要测一条消息传了多少信息，这条信息最好是猜不出来的，对错也能客观判定。
 
-作者的话分三种：如实、省略、说错。每种情况下看三件事：
-- 信息传过去了多少；
-- 作者说错时，读者跟的是作者知道的还是作者说的；
-- 读者"用得出"和"说得出"差多少。
+所以我们造了 SecretBench。每个项目里，生产者 `encode` 按一个随机生成的私有格式写记录。三个消费者方法必须知道这个格式才能写对，而它们的文档和可见测试都不透露格式，只能从帖子里得知。
 
 详见 [`doc/benchmark.md`](doc/benchmark.md)。
 
 ## 目前看到的现象
 
-以下都是初步结果：单个模型（Qwen3-8B）、单个随机种子、几十个项目。
+以下都是初步结果：只用了一个模型（Qwen3-8B）、一个随机种子、几十个项目。
 
 | 现象 | 证据 |
 |---|---|
 | **怎么读比训不训练更重要。** 把作者回复的隐状态池化成向量，几乎什么也传不过去；从整个上下文读出来，零训练就比作者自己的文字传得更准。在任务上训练压缩器，反而把内容抹成了模板 | 消费者 `decode` 通过率：本方法 0.45，作者的文字 0.35，池化 0.008，训练后 0 |
-| **潜在帖子跟随作者知道的，而不是作者说的。** 所以它更难用来撒谎，但也会泄露作者没说的东西 | 作者谎称"做完了"时，原版读者从训练过 writer 的帖子里读出真实测试结果的准确率是 0.94，换成别人的帖子是 0.48；线性探针区分谎言和真话 0.91，只看文字 0.71 |
-| **读者用得出，却说不出。** 靠询问来审计潜在消息会漏报 | 直接问读者"`encode` 返回什么"，40 次全答"消息是空的"；同一条帖子放进写代码的提示里，45% 的 `decode` 写对了格式 |
+| **潜在信号跟着作者知道的走，而不是作者说的。** 所以它有望成为核对说法的证据，但也会泄露作者没说的东西 | 作者谎称"做完了"时，原版读者从训练过 writer 的帖子里读出真实测试结果的准确率是 0.94，换成别人的帖子是 0.48；线性探针区分谎言和真话 0.91，只看文字 0.71 |
+| **读者用得出，却说不出。** 只靠询问来审计潜在消息会漏报 | 直接问读者"`encode` 返回什么"，40 次全答"消息是空的"；同一条帖子放进写代码的提示里，45% 的 `decode` 写对了格式 |
 
 完整的实验记录（R1–R13）见 [`doc/research_notes.md`](doc/research_notes.md)。
 
 ## 仓库里有什么
 
 ```
-model/        方法本身：潜在帖子怎么写、怎么读（HF / mock 后端、查询向量、训练脚本）
-benchmark/    SecretBench 与 ClassEval 任务、共享代码区、测试沙箱
-forum/        多 agent 论坛：调度、单个 agent 的工作流程、帖子与出处、提示模板、指标
+model/        方法本身：后端（mock / 本地 HF 模型 / API）、潜在帖子的写法（writers）
+benchmark/    SecretBench 与 ClassEval 任务、共享代码区、测试沙箱、基于执行的评测
+forum/        多 agent 论坛：调度、单个 agent 的工作流程、帖子与出处、提示词、指标
+training/     训练类的消融实验（读取侧 adapter、writer head）
 analysis/     结果分析：对比表、配对检验、线性探针、SecretBench 专用统计
+experiments/  每个实验一个脚本，本地用 bash 跑，集群上用 sbatch 提交
 data/         ClassEval 数据（FudanSELab，MIT 许可），以及我们筛过的可用类
-jobs/         Slurm 作业脚本，每个对应一个实验
-tests/        单元测试（不需要 GPU）
+tests/        单元测试
 doc/          研究计划、方法、基准、代码导览、完整研究笔记
 literature/   文献索引（707 篇）与离线浏览页
 runs/         实验输出（不入库）
 ```
 
-各文件夹里每个文件做什么，见 [`doc/code_guide.md`](doc/code_guide.md)。
+每个文件做什么，见 [`doc/code_guide.md`](doc/code_guide.md)。
 
 ## 跑起来
 
-**不需要 GPU 的部分。** 只要 Python 3.11，在仓库根目录运行：
+**准备环境。** 推荐 Python 3.11：
 
 ```bash
+git clone https://github.com/jwj1342/ThoughtForum.git && cd ThoughtForum
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 python -m unittest discover -s tests -t .
+```
+
+mock 后端、API 后端和大部分测试只用标准库，所以如果暂时只想看看流程，`pip install` 那一步可以先跳过。
+
+**先用 mock 后端看一遍流程。** 不加载任何模型：
+
+```bash
 python -m forum.run --backend mock --tasks toy --grid channel=none,text,latent --out runs/demo
 ```
 
-mock 后端不加载模型，只用来确认整条管线是通的。
+**用本地模型。** 潜在帖子要读模型的隐状态，所以需要把模型放在本地。我们自己用的是一张 40GB 的 GPU 切片，但这不是硬性要求：
+- Qwen3-8B 的权重约 16GB（bf16），一张 20–24GB 显存的卡跑推理一般就够了；
+- 显存更小，可以换同系列的 Qwen3-4B 或 Qwen3-1.7B；
+- 训练类的消融实验要对整个模型反传，显存需求会高一些。
 
-**用真实模型。** 需要一张 40 GB 以上的 GPU，依赖写在 `requirements.txt`（torch 2.9、transformers 4.57）。先下载 Qwen3-8B，然后把本方法放进 SecretBench 论坛跑一次：
+`--model` 可以写本地路径，也可以直接写 HuggingFace 上的名字，第一次运行时会自动下载：
 
 ```bash
-huggingface-cli download Qwen/Qwen3-8B --local-dir /path/to/Qwen3-8B
-export LF_MODEL=/path/to/Qwen3-8B PYTHONPATH=.
+export LF_MODEL=Qwen/Qwen3-8B        # 或者本地路径
 python -m forum.run --backend hf --tasks secret:40 --spec private --memory true \
     --channel latent --writer-head random:16 --out runs/method
 ```
 
-`--writer-head random:16` 就是本方法；换成 `--channel text` 就是文字基线。
+`--writer-head random:16` 就是本方法；把它换成 `--channel text` 就是文字基线。
 
-**在 Alliance 集群上。** 用 `source setup_env.sh` 加载模块，并在作业里用 wheelhouse 建环境；模型路径用 `LF_MODEL_SRC` 指定。实验通过 `jobs/` 里的脚本提交，例如 `sbatch jobs/e0s3.sbatch`。脚本里的账户 `def-zhouyang` 需要换成你自己的。
+**用 API。** 没有 GPU 也可以接任何兼容 OpenAI 接口的服务，例如 OpenAI、阿里云百炼上的千问、本地的 vLLM 或 Ollama，跑文字基线和不交流的条件。API 拿不到隐状态，所以跑不了潜在帖子。
+
+key 从环境变量读取，不会写进配置或日志：
+
+```bash
+export LF_API_KEY=你的key            # 换成别的变量名可以用 --api-key-env
+python -m forum.run --backend api --model qwen3-8b \
+    --api-base https://dashscope.aliyuncs.com/compatible-mode/v1 --api-extra '{"enable_thinking": false}' \
+    --tasks secret:40 --spec private --memory true --channel text --out runs/api_text
+```
+
+本地的 vLLM 一般不需要 key，把 `--api-base` 换成 `http://localhost:8000/v1` 即可。
+
+**跑完整实验。** `experiments/` 里每个脚本对应一个实验，在仓库根目录运行：
+
+```bash
+bash experiments/smoke.sh                              # 本地：用真模型把每个入口都简短跑一遍
+sbatch --account=<你的账户> experiments/e0s3.sh          # 有 Slurm 的集群上
+```
+
+个人的设置（模型路径等）写在 `experiments/local.sh` 里，这个文件不会入库。在 Alliance（Compute Canada）的集群上，脚本会自动改用模块系统和 wheelhouse。
 
 ## 接下来
 
@@ -97,6 +166,6 @@ python -m forum.run --backend hf --tasks secret:40 --spec private --memory true 
 - [`doc/RP.md`](doc/RP.md)：研究计划，一句话加简短展开。
 - [`doc/method.md`](doc/method.md)：方法。
 - [`doc/benchmark.md`](doc/benchmark.md)：测量基准。
-- [`doc/code_guide.md`](doc/code_guide.md)：代码导览、实验开关、输出与作业。
+- [`doc/code_guide.md`](doc/code_guide.md)：代码导览、实验开关、输出与实验脚本。
 - [`doc/research_notes.md`](doc/research_notes.md)：完整研究笔记，包括文献判断、设计取舍、R1–R13 实验记录、现象与风险。
 - [`literature/`](literature/)：文献索引，用浏览器打开 `literature/literature_review.html` 即可离线浏览。论文 PDF 不入库，可用 `literature/tools/fetch_pdfs.py` 重新下载。

@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from benchmark.sandbox import run_tests
+from benchmark.evaluate import run
 from benchmark.tasks import load_classeval
 from benchmark.workspace import Workspace, normalize_method
 
@@ -24,12 +24,12 @@ def check(project, repeat: int = 2) -> tuple[bool, str]:
     for s in project.subtasks:
         for kind, test in (("hidden", s.hidden_test), ("visible", s.visible_test)):
             for _ in range(repeat):
-                r = run_tests(ref, project.test_prelude + "\n" + test)
+                r = run(project, ref, test)
                 if not r.ok:
                     return False, f"{s.name} {kind}: {r.brief()[:160]}"
     if project.integration_test:
         for _ in range(repeat):
-            r = run_tests(ref, project.test_prelude + "\n" + project.integration_test)
+            r = run(project, ref, project.integration_test)
             if not r.ok:
                 return False, f"integration: {r.brief()[:160]}"
     return True, ""

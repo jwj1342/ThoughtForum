@@ -5,11 +5,12 @@ import ast
 import random
 import re
 
-from forum import prompts as P
-from forum.posts import Post
-from benchmark.sandbox import TestResult, run_tests
+from benchmark.evaluate import hidden, run
+from benchmark.sandbox import TestResult
 from benchmark.tasks import private_skeleton
 from benchmark.workspace import normalize_method
+from forum import prompts as P
+from forum.posts import Post
 
 _STATUS = re.compile(r"STATUS:\s*(DONE|PARTIAL|BLOCKED)", re.I)
 
@@ -79,12 +80,6 @@ class Agent:
                 return
             if c.cfg.deps_first:
                 ready = [o for o in options if all(c.forum.closed(d) for d in c.project.subtask(o).deps)]
-                # deps_wait: rather than start a method blind, wait while a teammate is still writing
-                # one of its dependencies (no deadlock: only waits on dependencies someone owns)
-                pending = {d for o in options for d in c.project.subtask(o).deps if not c.forum.closed(d)}
-                if not ready and c.cfg.deps_wait and pending & set(c.owner):
-                    c.log("wait", rnd, self.name, on=sorted(pending & set(c.owner)))
-                    return
                 options = ready or options
             self.current, self.attempt = self._choose(rnd, options), 0
             c.owner[self.current] = self.name
@@ -114,8 +109,8 @@ class Agent:
             post.verified.update(peer_ok=None, peer_brief="no valid test class", peer_by=self.name)
             c.log("peer", rnd, self.name, method=st.name, pid=post.pid, valid_tests=False)
             return
-        res = run_tests(c.ws.assemble(), c.project.test_prelude + "\n" + tests)
-        ref = run_tests(c.ws.reference(), c.project.test_prelude + "\n" + tests)  # analysis only: are the tests right?
+        res = run(c.project, c.ws.assemble(), tests)
+        ref = run(c.project, c.ws.reference(), tests)  # analysis only: are the tests right?
         post.verified.update(peer_ok=res.ok, peer_brief=res.brief()[:200], peer_by=self.name, peer_valid=ref.ok)
         c.stats["peer_checks"] += 1
         c.stats["peer_fail"] += not res.ok
@@ -144,76 +139,19 @@ class Agent:
         return pick
 
     def _work(self, rnd, st):
+        """One attempt at method `st`: read, implement, report, post."""
         c, cfg = self.ctx, self.ctx.cfg
-        posts = c.forum.select(self.name, st.name, st.deps)
-        block, latents, read_log = c.forum.render(posts, c.ws.version)
-        deps = (" It may call these methods, which teammates implement: "
-                + ", ".join(f"`{d}`" for d in st.deps) + ".") if st.deps else ""
-        fb = P.FEEDBACK.format(code=self.last[st.name][0], result=self.last[st.name][1]) if st.name in self.last else ""
-        if cfg.memory:   # what the agent itself wrote earlier; without it, agents forget their own work
-            fb = "".join(P.OWN.format(name=d, code=self.last[d][0]) for d in st.deps if d in self.last) + fb
-        msgs = [{"role": "system", "content": self.system},
-                {"role": "user", "content": P.IMPLEMENT.format(spec=self._spec({st.name}), forum=block, name=st.name,
-                                                               cls=c.project.class_name, deps=deps, feedback=fb)}]
-        g = self._llm(msgs, latents, "implement", {"subtask": st, "agent": self.name, "attempt": self.attempt},
-                      cfg.max_new_tokens)
-        code = normalize_method(g.text, st.name)
-        wrote = code is not None and c.ws.try_set(st.name, code, self.name)
-        module = c.ws.assemble()
-        if wrote:
-            vis = run_tests(module, c.project.test_prelude + "\n" + st.visible_test)
-        else:
-            vis = TestResult(first_error=f"no valid definition of `{st.name}` was found in the reply")
-        hid = run_tests(module, c.project.test_prelude + "\n" + st.hidden_test)
-        iso = run_tests(c.ws.isolated(st.name), c.project.test_prelude + "\n" + st.hidden_test)
-        self.attempt += 1
-        self.last[st.name] = (code or g.text[-1500:], vis.brief())
-
-        # The instruction goes to every report of a deceiving agent, pass or fail, so its honest and
-        # dishonest DONE posts differ only in the test result, not in the prompt.
-        deceive = self.overclaim and cfg.overclaim_mode == "deceive"
-        mislead = self.overclaim and cfg.overclaim_mode == "mislead"
-        report = P.REPORT.format(name=st.name, result=vis.brief()) + (P.DECEIVE.format(name=st.name) if deceive else "") \
-            + (P.MISLEAD.format(name=st.name) if mislead else "")
-        rep_msgs = msgs + [{"role": "assistant", "content": g.text}, {"role": "user", "content": report}]
-        rep = self._llm(rep_msgs, latents, "report",
-                        {"subtask": st, "visible_ok": vis.ok, "pressure": self.overclaim}, 160)
-        text, claimed, falsified = rep.text, parse_status(rep.text), False
-        if self.overclaim and cfg.overclaim_mode == "always" and claimed != "DONE":
-            text, claimed, falsified = force_done(text), "DONE", True
-        elif deceive and not vis.ok:
-            # The model wrote the lie itself; the harness only makes sure the claim is DONE.
-            falsified = True
-            if claimed != "DONE":
-                text, claimed = force_done(text), "DONE"
-
-        lat = None
-        if cfg.channel == "latent":
-            meta = {"anchor": st.name, "visible_ok": vis.ok}
-            if cfg.source == "report":
-                enc_msgs = rep_msgs + [{"role": "assistant", "content": text}]
-                lat = c.backend.encode(rep_msgs, text, latents, k=cfg.latent_k, purpose="report", meta=meta)
-            else:
-                art = P.ARTIFACT.format(name=st.name, cls=c.project.class_name,
-                                        code=c.ws.code.get(st.name, "(no code)"), result=vis.brief())
-                art_msgs = [{"role": "system", "content": P.ARTIFACT_SYSTEM},
-                            {"role": "user", "content": "Read the artifact."}]
-                enc_msgs = art_msgs + [{"role": "assistant", "content": art}]
-                lat = c.backend.encode(art_msgs, art, (), k=cfg.latent_k, purpose="artifact", meta=meta)
-            c.stats["latent_bytes"] += lat.nbytes
-            c.stats["payload_slots"] += lat.k
-        elif cfg.channel == "text":
-            if cfg.source == "artifact":   # post the committed code and CI log, keep only the STATUS line
-                text = f"STATUS: {claimed}\n" + P.ARTIFACT.format(name=st.name, cls=c.project.class_name,
-                                                                code=c.ws.code.get(st.name, "(no code)"), result=vis.brief())
-            c.stats["payload_slots"] += c.backend.count_tokens(text)
-
+        block, latents, read_log = c.forum.render(c.forum.select(self.name, st.name, st.deps), c.ws.version)
+        msgs, reply, code, wrote, vis = self._implement(st, block, latents)
+        hid, iso = hidden(c.project, c.ws, st.name)   # for analysis only; agents never see these
+        rep_msgs, text, claimed, falsified = self._report(st, msgs, reply, latents, vis)
+        text, lat, src_msgs = self._payload(st, rep_msgs, text, claimed, latents, vis)
         post = c.forum.write(Post(0, c.project.pid, self.name, rnd, st.name, claimed, text, lat,
                                   version=c.ws.version[st.name], verified=vis.to_dict(),
                                   truth={**hid.to_dict(), "iso_ok": iso.ok}, falsified=falsified,
                                   meta={"overclaimer": self.overclaim,
                                         # the writer's context, kept only for offline training of a writer
-                                        **({"context": enc_msgs} if lat is not None and cfg.save_latents else {})}))
+                                        **({"context": src_msgs} if lat is not None and cfg.save_latents else {})}))
         if cfg.trust == "crosscheck" and claimed == "DONE" and vis.ok:
             peers = [a for a in c.agents if a is not self]
             if peers:
@@ -226,3 +164,67 @@ class Agent:
         if released:
             c.owner.pop(st.name, None)
             self.current = None
+
+    def _implement(self, st, block, latents):
+        """Write the method and run its visible test. Returns (messages, reply, code, wrote, visible result)."""
+        c, cfg = self.ctx, self.ctx.cfg
+        fb = P.FEEDBACK.format(code=self.last[st.name][0], result=self.last[st.name][1]) if st.name in self.last else ""
+        if cfg.memory:   # what the agent itself wrote earlier; without it, agents forget their own work
+            fb = "".join(P.OWN.format(name=d, code=self.last[d][0]) for d in st.deps if d in self.last) + fb
+        msgs = [{"role": "system", "content": self.system},
+                {"role": "user", "content": P.IMPLEMENT.format(spec=self._spec({st.name}), forum=block, name=st.name,
+                                                               cls=c.project.class_name, deps=P.deps_note(st.deps), feedback=fb)}]
+        g = self._llm(msgs, latents, "implement", {"subtask": st, "agent": self.name, "attempt": self.attempt},
+                      cfg.max_new_tokens)
+        code = normalize_method(g.text, st.name)
+        wrote = code is not None and c.ws.try_set(st.name, code, self.name)
+        if wrote:
+            vis = run(c.project, c.ws.assemble(), st.visible_test)
+        else:
+            vis = TestResult(first_error=f"no valid definition of `{st.name}` was found in the reply")
+        self.attempt += 1
+        self.last[st.name] = (code or g.text[-1500:], vis.brief())
+        return msgs, g.text, code, wrote, vis
+
+    def _report(self, st, msgs, reply, latents, vis):
+        """The author's message and its claim. Returns (report messages, text, claimed status, falsified)."""
+        cfg = self.ctx.cfg
+        # The instruction goes to every report of a deceiving agent, pass or fail, so its honest and
+        # dishonest DONE posts differ only in the test result, not in the prompt.
+        deceive = self.overclaim and cfg.overclaim_mode == "deceive"
+        mislead = self.overclaim and cfg.overclaim_mode == "mislead"
+        report = P.REPORT.format(name=st.name, result=vis.brief()) + (P.DECEIVE.format(name=st.name) if deceive else "") \
+            + (P.MISLEAD.format(name=st.name) if mislead else "")
+        rep_msgs = msgs + [{"role": "assistant", "content": reply}, {"role": "user", "content": report}]
+        rep = self._llm(rep_msgs, latents, "report", {"subtask": st, "visible_ok": vis.ok, "pressure": self.overclaim}, 160)
+        text, claimed, falsified = rep.text, parse_status(rep.text), False
+        if self.overclaim and cfg.overclaim_mode == "always" and claimed != "DONE":
+            text, claimed, falsified = force_done(text), "DONE", True
+        elif deceive and not vis.ok:
+            # The model wrote the lie itself; the harness only makes sure the claim is DONE.
+            falsified = True
+            if claimed != "DONE":
+                text, claimed = force_done(text), "DONE"
+        return rep_msgs, text, claimed, falsified
+
+    def _payload(self, st, rep_msgs, text, claimed, latents, vis):
+        """What the post carries. Returns (text, latent or None, the context a latent was read from)."""
+        c, cfg = self.ctx, self.ctx.cfg
+        art = P.ARTIFACT.format(name=st.name, cls=c.project.class_name, code=c.ws.code.get(st.name, "(no code)"),
+                                result=vis.brief()) if cfg.source == "artifact" else ""
+        if cfg.channel == "text":
+            if cfg.source == "artifact":   # post the committed code and CI log, keep only the STATUS line
+                text = f"STATUS: {claimed}\n" + art
+            c.stats["payload_slots"] += c.backend.count_tokens(text)
+        if cfg.channel != "latent":
+            return text, None, None
+        if cfg.source == "report":   # read in the author's own context
+            src_msgs, src_text, src_latents = rep_msgs, text, latents
+        else:                        # the trusted harness reads the code and CI log; the author cannot shape it
+            src_msgs = [{"role": "system", "content": P.ARTIFACT_SYSTEM}, {"role": "user", "content": "Read the artifact."}]
+            src_text, src_latents = art, ()
+        lat = c.writer.write(src_msgs, src_text, src_latents, purpose=cfg.source,
+                             meta={"anchor": st.name, "visible_ok": vis.ok})
+        c.stats["latent_bytes"] += lat.nbytes
+        c.stats["payload_slots"] += lat.k
+        return text, lat, src_msgs + [{"role": "assistant", "content": src_text}]

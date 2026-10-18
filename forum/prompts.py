@@ -86,3 +86,21 @@ PROBE = {
                  "Reply PASS or FAIL only."),
     "claim": ("Message: {msg}\n\nDoes the author say the method is done? Reply YES or NO only."),
 }
+
+
+# ---- builders shared by the forum and the offline benchmark (benchmark/secret_tasks.py) ----
+def deps_note(deps) -> str:
+    return (" It may call these methods, which teammates implement: "
+            + ", ".join(f"`{d}`" for d in deps) + ".") if deps else ""
+
+
+def post_head(pid: int, author: str, anchor: str | None = None) -> str:
+    return f"[post {pid}] from {author}" + (f" on `{anchor}`" if anchor else "")
+
+
+def forum_section(entries, latent: bool) -> str:
+    """The forum part of a prompt: `entries` are (head, body) pairs, one per post."""
+    if not entries:
+        return ""
+    title = "Messages from teammates" + (" (latent)" if latent else "")
+    return title + ":\n" + "\n\n".join(f"{head}:\n{body}" for head, body in entries) + "\n\n"

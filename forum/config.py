@@ -4,8 +4,12 @@ import dataclasses
 import os
 from dataclasses import dataclass
 
+from model.backends import DEFAULT_MODEL
+
 CHOICES = {
-    "backend": ("mock", "hf"),
+    # mock: no model (tests). hf: a local HuggingFace model, needed for latent posts. api: any
+    # OpenAI-compatible endpoint (text only), key from the environment variable api_key_env.
+    "backend": ("mock", "hf", "api"),
     # what a forum post carries to readers
     "channel": ("none", "text", "latent"),
     # how posts are routed: threads keyed by method name, or one broadcast pool without topics
@@ -19,8 +23,8 @@ CHOICES = {
     # computed by the trusted harness, so the author cannot shape its content. With the text
     # channel, artifact posts the code and CI log as text (the explicit "read my code" baseline).
     "source": ("report", "artifact"),
-    # content controls applied to every post a reader receives
-    "control": ("none", "shuffle", "zero", "mean", "noise"),
+    # content controls applied to every post a reader receives: another post's payload, or an empty one
+    "control": ("none", "shuffle", "zero"),
     # always: the harness rewrites the STATUS line of overclaiming agents to DONE (crude; the body may
     # still describe the failure). pressure: only prompt them. deceive: they are told to write a coherent
     # DONE message whatever the test said, so a hidden failure leaves no trace in the text itself.
@@ -37,10 +41,13 @@ CHOICES = {
 @dataclass
 class RunConfig:
     backend: str = "mock"
-    model: str = os.environ.get("LF_MODEL", "/scratch/jwj/models/Qwen3-8B")
+    model: str = DEFAULT_MODEL     # hf: local path or Hub id (env LF_MODEL); api: the provider's model name
     enable_thinking: bool = False
     mock_p_correct: float = 0.6
-    reader_adapter: str = ""       # path to a trained read-in adapter (train_reader.py); "" = training-free
+    api_base: str = os.environ.get("LF_API_BASE", "")   # e.g. https://api.openai.com/v1
+    api_key_env: str = "LF_API_KEY"   # name of the environment variable holding the key (never the key itself)
+    api_extra: str = ""               # JSON merged into each request, e.g. '{"enable_thinking": false}'
+    reader_adapter: str = ""       # path to a trained read-in adapter (training/reader.py); "" = training-free
     writer_head: str = ""          # gist writer: "random:16" (untrained, the method) or a trained head's path; "" = chunk means
 
     tasks: str = "toy"
@@ -54,7 +61,6 @@ class RunConfig:
     max_attempts: int = 2          # implement-test cycles before an agent releases a subtask
     choose: str = "llm"
     deps_first: bool = True        # offer methods whose dependencies are closed first (others only if none are)
-    deps_wait: bool = False        # if none are, wait while a teammate is writing a dependency
     memory: bool = False           # an agent sees its own last code for dependencies it wrote itself
 
     channel: str = "text"
@@ -83,6 +89,8 @@ class RunConfig:
             raise ValueError("controls need a channel")
         if self.source == "artifact" and self.channel == "none":
             raise ValueError("source=artifact needs a channel")
+        if self.backend == "api" and self.channel == "latent":
+            raise ValueError("latent posts need a local model: use --backend hf (the api backend is text only)")
         return self
 
     def replace(self, **kw) -> "RunConfig":
@@ -92,8 +100,6 @@ class RunConfig:
         t = f"{self.channel}-{self.structure}-{self.trust}"
         if self.spec != "full":
             t += f"-spec_{self.spec}"
-        if self.deps_wait:
-            t += "-wait"
         if self.memory:
             t += "-mem"
         if self.source != "report":

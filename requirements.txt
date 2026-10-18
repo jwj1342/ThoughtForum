@@ -1,4 +1,6 @@
-# Installed from the Alliance wheelhouse: pip install --no-index -r requirements.txt
-torch==2.9.1
-transformers==4.57.6
-numpy==2.2.2
+# Needed for the hf backend (latent posts), training/ and analysis/linprobe.py.
+# The mock and api backends, the benchmark and the unit tests need only the Python standard library.
+# Tested with Python 3.11, torch 2.9.1, transformers 4.57.6, numpy 2.2.2.
+torch>=2.4
+transformers>=4.51,<5
+numpy

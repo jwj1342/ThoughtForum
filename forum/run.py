@@ -14,15 +14,26 @@ import csv
 import dataclasses
 import itertools
 import json
+import logging
 import os
 import random
 import sys
 
-from model.backends import make_backend
-from forum.config import RunConfig
-from forum.metrics import flat_row, summarize
-from forum.orchestrator import latent_dump, run_project, write_jsonl
 from benchmark.tasks import parse_task_spec
+from forum.config import RunConfig
+from forum.dump import latent_dump
+from forum.metrics import flat_row, summarize
+from forum.orchestrator import run_project
+from model.backends import make_backend
+from model.writers import make_writer
+
+log = logging.getLogger("forum")
+
+
+def write_jsonl(path, rows):
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
 
 
 def _coerce(field, value: str):
@@ -59,18 +70,24 @@ def conditions(base: RunConfig, grid):
             yield cfg
 
 
+def writer_for(cfg: RunConfig, backend):
+    """The writer of latent posts for this condition; None unless channel=latent."""
+    return make_writer(backend, cfg.latent_k, cfg.writer_head) if cfg.channel == "latent" else None
+
+
 def run_condition(cfg: RunConfig, backend, projects) -> dict:
     out = os.path.join(cfg.out, cfg.tag())
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "config.json"), "w") as f:
         json.dump(dataclasses.asdict(cfg), f, indent=1)
+    writer = writer_for(cfg, backend)
     bank, records, events, probes = [], [], [], []
     for i, p in enumerate(projects):
-        rec, ev, pr = run_project(p, backend, cfg, bank, seed=cfg.seed * 1000 + i)
+        rec, ev, pr = run_project(p, backend, writer, cfg, bank, seed=cfg.seed * 1000 + i)
         records.append(rec); events += ev; probes += pr
-        print(f"  [{cfg.tag()}] {p.pid}: method_pass={rec['method_pass']:.2f} class_pass={rec['class_pass']} "
-              f"declared={rec['declared_done']} false_done={rec['false_done']}/{rec['claims_done']} ({rec['wall_s']}s)",
-              flush=True)
+        log.info("[%s] %s: method_pass=%.2f class_pass=%s declared=%s false_done=%d/%d (%ss)", cfg.tag(), p.pid,
+                 rec["method_pass"], rec["class_pass"], rec["declared_done"], rec["false_done"], rec["claims_done"],
+                 rec["wall_s"])
     write_jsonl(os.path.join(out, "projects.jsonl"), records)
     write_jsonl(os.path.join(out, "events.jsonl"), events)
     write_jsonl(os.path.join(out, "probes.jsonl"), probes)
@@ -84,6 +101,7 @@ def run_condition(cfg: RunConfig, backend, projects) -> dict:
 
 
 def main(argv=None):
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     base, grid = parse_args(argv)
     base.validate()
     random.seed(base.seed)
@@ -91,18 +109,18 @@ def main(argv=None):
     if not projects:
         sys.exit("no projects selected")
     conds = list(conditions(base, grid))
-    print(f"{len(projects)} projects x {len(conds)} conditions -> {base.out}", flush=True)
+    log.info("%d projects x %d conditions -> %s", len(projects), len(conds), base.out)
     backend = make_backend(base)
     rows = []
     for cfg in conds:
         s = run_condition(cfg, backend, projects)
         rows.append(flat_row(s))
-        print(json.dumps({k: s[k] for k in ("condition", "method_pass", "class_pass", "false_declaration")}), flush=True)
+        log.info(json.dumps({k: s[k] for k in ("condition", "method_pass", "class_pass", "false_declaration")}))
     os.makedirs(base.out, exist_ok=True)
     with open(os.path.join(base.out, "summary.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader(); w.writerows(rows)
-    print("wrote", os.path.join(base.out, "summary.csv"))
+    log.info("wrote %s", os.path.join(base.out, "summary.csv"))
 
 
 if __name__ == "__main__":

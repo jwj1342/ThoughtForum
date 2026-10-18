@@ -1,18 +1,23 @@
 """Run unittest code against an assembled module in a throwaway directory.
 
 This is the trusted CI of the zero-trust setting. It isolates by process only, with a
-timeout, rlimits, a temp cwd, and `python -I`; that is enough for ClassEval-style tasks.
-Use Apptainer before running untrusted repo-level code.
+timeout, a temp cwd, `python -I`, and on POSIX systems CPU and memory rlimits; that is enough
+for ClassEval-style tasks. Use a container before running untrusted repo-level code.
+The temp directory follows TMPDIR, so a cluster job can point it at node-local disk.
 """
 from __future__ import annotations
 
 import json
 import os
-import resource
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, asdict
+
+try:
+    import resource
+except ImportError:   # Windows: no rlimits, the timeout still applies
+    resource = None
 
 _MARK = "__LF_RESULT__"
 _RUNNER = f'''
@@ -62,22 +67,34 @@ class TestResult:
 
 
 def _limits(cpu_s: int):
+    if resource is None:
+        return None
+
     def fn():
-        resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s + 1))
-        resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
+        for lim, val in ((resource.RLIMIT_CPU, (cpu_s, cpu_s + 1)), (resource.RLIMIT_AS, (2 << 30, 2 << 30))):
+            try:
+                resource.setrlimit(lim, val)
+            except (ValueError, OSError):   # e.g. macOS does not support RLIMIT_AS
+                pass
     return fn
 
 
+def _env(home: str) -> dict:
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": home}
+    if os.name == "nt":
+        env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", "")
+    return env
+
+
 def run_tests(module_src: str, test_src: str, timeout: int = 10) -> TestResult:
-    root = os.environ.get("SLURM_TMPDIR") or None
-    with tempfile.TemporaryDirectory(dir=root, prefix="lf_") as d:
+    with tempfile.TemporaryDirectory(prefix="lf_") as d:
         path = os.path.join(d, "case.py")
         with open(path, "w", encoding="utf-8") as f:
             f.write(module_src + "\n\n" + test_src + _RUNNER)
         try:
             p = subprocess.run([sys.executable, "-I", path], cwd=d, capture_output=True, text=True,
                                timeout=timeout, preexec_fn=_limits(timeout),
-                               env={"PATH": os.environ.get("PATH", ""), "HOME": d})
+                               env=_env(d))
         except subprocess.TimeoutExpired:
             return TestResult(timeout=True, first_error="timeout")
         for line in reversed(p.stdout.splitlines()):

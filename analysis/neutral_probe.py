@@ -16,13 +16,13 @@ two are close, the probe was just reading the text.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 
 import torch
 
-from model.backends.hf import HFBackend
 from analysis.linprobe import grouped_cv, probe_all
+from forum.dump import dump_files, load_rows
+from model.backends import DEFAULT_MODEL
 
 NEUTRAL = [{"role": "system", "content": "You are reading a short message."},
            {"role": "user", "content": "Read the message."}]
@@ -32,13 +32,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("latents", nargs="+")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--model", default=None)
+    ap.add_argument("--model", default=DEFAULT_MODEL)
     a = ap.parse_args()
-    files = sorted({f for g in a.latents for f in glob.glob(g)})
-    rows = [r for f in files for r in torch.load(f, weights_only=False) if r["text"].strip()]
-    import os
-    b = HFBackend(a.model or os.environ.get("LF_MODEL", "/scratch/jwj/models/Qwen3-8B"))
-    neutral = torch.stack([b.encode(NEUTRAL, r["text"], (), k=r["latent"].shape[0]).data.float().mean(0) for r in rows])
+    files = dump_files(a.latents)
+    rows = [r for r in load_rows(files) if r["text"].strip()]
+    from model.backends.hf import HFBackend
+    from model.hf_writers import ChunkMeanWriter
+    b = HFBackend.load(a.model)
+    neutral = torch.stack([ChunkMeanWriter(b, r["latent"].shape[0]).write(NEUTRAL, r["text"]).data.float().mean(0)
+                           for r in rows])
     writer = torch.stack([r["latent"].float().mean(0) for r in rows])
     res = {"files": files, "n_posts": len(rows), "n_falsified": sum(r["falsified"] for r in rows),
            "writer": probe_all(writer, rows, perm=False), "neutral": probe_all(neutral, rows, perm=False)}

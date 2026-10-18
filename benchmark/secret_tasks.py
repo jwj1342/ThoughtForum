@@ -1,19 +1,18 @@
-"""SecretBench prompts and targets for E1s (train_secret.py); pure Python, so it is testable without a GPU.
+"""SecretBench offline: producer contexts, reader questions and scoring, without running a forum.
 
-The prompts are built exactly as the forum builds them (agent._work, Forum.render), so a head
-trained on them sees at test time what a forum consumer sees.
+The prompts are built with the forum's own builders (forum/prompts.py), so a reader here sees
+exactly what a forum consumer sees. Pure Python, so it is testable without a GPU.
 """
 from __future__ import annotations
 
 import random
 import re
 
-from forum import prompts as P
-from model.backends.base import LATENT_MARK
-from benchmark.sandbox import run_tests
 from benchmark.secretbench import make_project
 from benchmark.tasks import private_skeleton
-from benchmark.workspace import Workspace, normalize_method
+from benchmark.workspace import normalize_method
+from forum import prompts as P
+from model.backends.base import LATENT_MARK
 
 CONSUMERS = ("decode", "is_record", "get_field")
 SECRET_Q = ("Message: {msg}\n\nThis message is about `{cls}.encode`. What string does "
@@ -75,8 +74,7 @@ def forum_block(kind: str, text: str = "") -> str:
     if kind == "none":
         return ""
     body = LATENT_MARK.format(i=0) if kind == "latent" else (text.strip() or "(empty)")
-    title = "Messages from teammates" + (" (latent)" if kind == "latent" else "")
-    return f"{title}:\n[post 0] from agent1 on `encode`:\n{body}\n\n"
+    return P.forum_section([(P.post_head(0, "agent1", "encode"), body)], latent=kind == "latent")
 
 
 def secret_item(project, msg: str):
@@ -87,15 +85,5 @@ def secret_item(project, msg: str):
 def use_item(project, name: str, block: str):
     st = project.subtask(name)
     prompt = P.IMPLEMENT.format(spec=private_skeleton(project.skeleton, {name}), forum=block, name=name,
-                                cls=project.class_name,
-                                deps=" It may call these methods, which teammates implement: `encode`.", feedback="")
+                                cls=project.class_name, deps=P.deps_note(project.subtask(name).deps), feedback="")
     return prompt, f"```python\n{normalize_method(st.solution, name)}```", P.SYSTEM.format(agent="agent2", n=3)
-
-
-def use_ok(project, name: str, reply: str) -> tuple[bool, str | None]:
-    """Score a consumer reply as the forum's method_pass_iso does: hidden tests, other methods at reference."""
-    code = normalize_method(reply, name)
-    ws = Workspace(project)
-    ok = bool(code) and ws.try_set(name, code, "reader") and \
-        run_tests(ws.isolated(name), project.test_prelude + "\n" + project.subtask(name).hidden_test).ok
-    return ok, code

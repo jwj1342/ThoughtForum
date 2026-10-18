@@ -25,7 +25,7 @@ def _truth(post) -> dict:
             "claim": "YES" if post.claimed == "DONE" else "NO"}
 
 
-def _score(q: str, answer: str, truth: str, names: list[str]) -> bool:
+def score(q: str, answer: str, truth: str, names: list[str]) -> bool:
     a = (answer or "").upper()
     if q == "anchor":
         hits = [n for n in names if re.search(rf"(?<![\w]){re.escape(n)}(?![\w])", answer or "")]
@@ -49,7 +49,7 @@ def ask(backend, cfg, project, post, payload) -> dict:
         g = backend.chat([{"role": "system", "content": P.PROBE_SYSTEM}, {"role": "user", "content": user}],
                          latents, purpose="probe", meta={"question": q}, max_new_tokens=12, temperature=0.0)
         ans[q] = g.text.strip()[:60]
-        ok[q] = _score(q, g.text, truth[q], project.names)
+        ok[q] = score(q, g.text, truth[q], project.names)
     return {"answers": ans, "correct": ok, "truth": truth}
 
 

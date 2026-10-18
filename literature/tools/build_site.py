@@ -113,7 +113,8 @@ def validate(rows):
                     errors.append(f"{rid}: '{col}' has invalid value '{v}'")
         if r["code_open"] == "yes" and not r["code_url"].strip():
             errors.append(f"{rid}: code_open=yes but code_url empty")
-        if r["pdf_file"].strip() and not (ROOT / r["pdf_file"].strip()).is_file():
+        # PDFs are not in git (tools/fetch_pdfs.py downloads them): check only once they are there
+        if r["pdf_file"].strip() and (ROOT / "pdf").is_dir() and not (ROOT / r["pdf_file"].strip()).is_file():
             warnings.append(f"{rid}: pdf_file not found: {r['pdf_file']}")
     return errors, warnings
 

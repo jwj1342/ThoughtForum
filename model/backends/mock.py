@@ -1,16 +1,15 @@
-"""Deterministic stand-in for an LLM, so the harness can be tested on a login node.
+"""Deterministic stand-in for an LLM, so the pipeline can be tested without a model or a GPU.
 
-The mock reads its decisions from `meta`. It writes the reference solution with
-probability `p_correct`, and a stub otherwise. Its latent message is an idealized,
-lossless record of the post, so the plumbing (routing, controls, probes) can be checked
-end to end. It says nothing about what a real model's latents carry.
+The mock reads its decisions from `meta`. It writes the reference solution with probability
+`p_correct`, and a stub otherwise. Paired with MockWriter, whose latent post is an idealized,
+lossless record, routing, controls and probes can be checked end to end. It says nothing about
+what a real model's latents carry.
 """
 from __future__ import annotations
 
 import hashlib
-import re
 
-from .base import Backend, Generation, Latent, LATENT_RE
+from model.backends.base import Backend, Generation, LATENT_RE
 
 
 def _u(*parts) -> float:
@@ -41,14 +40,14 @@ class MockBackend(Backend):
         elif purpose == "peer_test":
             text = "```python\n" + meta["subtask"].hidden_test.replace("class ", "class Peer", 1) + "```"
         elif purpose == "probe":
-            text = self._probe(messages, latents, meta)
+            text = self._probe(latents, meta)
         else:
             text = ""
         return Generation(text, n_prompt, self.count_tokens(text))
 
-    def _probe(self, messages, latents, meta):
-        lat = latents[0] if latents else None
-        rec = lat.data if lat is not None and isinstance(lat.data, dict) else {}
+    @staticmethod
+    def _probe(latents, meta):
+        rec = latents[0].data if latents and isinstance(latents[0].data, dict) else {}
         q = meta.get("question")
         if not rec:
             return "unknown"
@@ -59,13 +58,3 @@ class MockBackend(Backend):
         if q == "claim":
             return "YES" if rec.get("claimed") == "DONE" else "NO"
         return "unknown"
-
-    def encode(self, messages, response, latents=(), *, k=16, purpose="", meta=None):
-        meta = meta or {}
-        m = re.search(r"STATUS:\s*(DONE|PARTIAL|BLOCKED)", response)
-        rec = {"anchor": meta.get("anchor"), "visible_ok": meta.get("visible_ok"),
-               "claimed": m.group(1) if m else None}
-        return Latent(rec, k, nbytes=k * 4096 * 2, origin=purpose or "report")
-
-    def transform(self, lat, kind, bank, seed):
-        return Latent({}, lat.k, lat.nbytes, origin=kind)

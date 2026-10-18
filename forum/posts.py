@@ -10,14 +10,15 @@ What is fixed, and what the experiment varies:
 - `trust=attested` adds a tag written by the trusted CI to each post. The tag reports the
   visible-test result of the code at that version, and marks the post stale if the code
   has changed since.
-- `control` swaps payloads at read time (shuffle, zero, mean, noise), so we can tell
-  whether a channel carries content or only format.
+- `control` swaps payloads at read time: `shuffle` shows another post's payload, `zero` an
+  empty one, so we can tell whether a channel carries content or only format.
 """
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
 
+from forum import prompts as P
 from model.backends import LATENT_MARK, Latent
 
 
@@ -39,8 +40,8 @@ class Post:
 
 
 class Forum:
-    def __init__(self, cfg, backend, bank: list[Post], seed: int):
-        self.cfg, self.backend, self.bank = cfg, backend, bank
+    def __init__(self, cfg, bank: list[Post], seed: int):
+        self.cfg, self.bank = cfg, bank
         self.posts: list[Post] = []
         self.rng = random.Random(seed)
         self._next = len(bank)
@@ -90,44 +91,40 @@ class Forum:
     def _payload(self, post: Post):
         """Apply the content control. Returns (text, latent)."""
         ctl = self.cfg.control
-        if ctl == "none":
-            return post.text, post.latent
         if ctl == "shuffle":
             others = [b for b in self.bank if (b.project, b.anchor) != (post.project, post.anchor)
                       and (b.latent is not None or self.cfg.channel == "text")]
             if others:
                 o = self.rng.choice(others)
                 return o.text, o.latent
-            ctl = "noise"
-        if self.cfg.channel == "text":
-            return {"zero": "", "mean": "(message withheld)", "noise": "(message withheld)"}[ctl], None
-        bank = [b.latent for b in self.bank if b.latent is not None]
-        return post.text, self.backend.transform(post.latent, ctl, bank, self.rng.randrange(1 << 30))
+            ctl = "zero"   # nothing to swap in yet
+        if ctl == "zero":
+            if self.cfg.channel == "text":
+                return "(message withheld)" if self.cfg.control == "shuffle" else "", None
+            return post.text, post.latent.blank()
+        return post.text, post.latent
 
     def render(self, posts: list[Post], versions: dict[str, int]) -> tuple[str, list[Latent], list[dict]]:
         """Format posts for a prompt. Returns (block, latents, read_log)."""
         if not posts:
             return "", [], []
-        lines, latents, log = [], [], []
+        entries, latents, log = [], [], []
         for p in posts:
-            head = f"[post {p.pid}] from {p.author}"
-            if self.cfg.structure == "anchored":
-                head += f" on `{p.anchor}`"
             stale = versions.get(p.anchor, p.version) != p.version
-            head += self.ci_tag(p, stale)
+            head = P.post_head(p.pid, p.author, p.anchor if self.cfg.structure == "anchored" else None) \
+                + self.ci_tag(p, stale)
             text, lat = self._payload(p)
             if self.cfg.channel == "latent":
                 body = LATENT_MARK.format(i=len(latents))
                 latents.append(lat)
             else:
                 body = text.strip() or "(empty)"
-            lines.append(f"{head}:\n{body}")
+            entries.append((head, body))
             log.append({"pid": p.pid, "anchor": p.anchor, "author": p.author, "claimed": p.claimed,
                         "verified_ok": (p.verified or {}).get("ok"), "truth_ok": (p.truth or {}).get("ok"),
                         "truth_iso_ok": (p.truth or {}).get("iso_ok"),
                         "falsified": p.falsified, "stale": stale})
-        title = "Messages from teammates" + (" (latent)" if self.cfg.channel == "latent" else "")
-        return title + ":\n" + "\n\n".join(lines) + "\n\n", latents, log
+        return P.forum_section(entries, latent=self.cfg.channel == "latent"), latents, log
 
     def board(self, project, owner: dict[str, str]) -> str:
         """The explicit skeleton: who works on what, and the 1-bit DONE flag each author sets.
