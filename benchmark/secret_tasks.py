@@ -5,10 +5,11 @@ exactly what a forum consumer sees. Pure Python, so it is testable without a GPU
 """
 from __future__ import annotations
 
+import ast
 import random
 import re
 
-from benchmark.secretbench import make_project
+from benchmark.secretbench import DELIMS, _record, make_project
 from benchmark.tasks import private_skeleton
 from benchmark.workspace import normalize_method
 from forum import prompts as P
@@ -18,7 +19,8 @@ CONSUMERS = ("decode", "is_record", "get_field")
 SECRET_Q = ("Message: {msg}\n\nThis message is about `{cls}.encode`. What string does "
             "`encode({args})` return? Reply with the string only.")
 
-# report templates; the vague ones do not state the format
+# Report templates. EXPLICIT states a format (the true one when honest, a false one when lying);
+# VAGUE leaves it out. Honest and lying reports share templates, so they differ only in the format.
 EXPLICIT = [
     "STATUS: DONE\nThe `encode` method turns a {rec} into a record: the tag '{tag}', then {order}, joined by '{delim}'.",
     "STATUS: DONE\n`encode` is done. Records look like '{example}' (tag, then {order}, separator '{delim}').",
@@ -31,9 +33,32 @@ VAGUE = [
 ]
 
 
+SPEECH = ("honest", "omit", "lie")
+
+
 def project_of(pid: str):
-    _, seed, i = pid.split("_")
-    return make_project(int(i), int(seed))
+    """Inverse of secretbench.project_id: Secret_<seed>_<i>, or Secret<L>_<seed>_<i> for an L-letter tag."""
+    head, seed, i = pid.split("_")
+    return make_project(int(i), int(seed), int(head[len("Secret"):] or 4))
+
+
+def false_secret(project) -> dict:
+    """A plausible but wrong format: every letter of the tag shifted, another delimiter, another order."""
+    s = project.meta["secret"]
+    tag = "".join(chr((ord(c) - 65 + 11) % 26 + 65) for c in s["tag"])
+    delim = DELIMS[(DELIMS.index(s["delim"]) + 1) % len(DELIMS)]
+    return {"tag": tag, "delim": delim, "order": s["order"][1:] + s["order"][:1]}
+
+
+def report(project, speech: str, tmpl: str) -> str:
+    """The producer's message under `speech` (honest / omit / lie), written with template `tmpl`."""
+    if speech == "omit":
+        return tmpl.format(rec=project.meta["record"])
+    s = project.meta["secret"] if speech == "honest" else false_secret(project)
+    values = re.search(r">>> c\.encode\((.*)\)", project.subtask("encode").doc).group(1)
+    example = _record(s["tag"], s["delim"], s["order"], project.meta["fields"], ast.literal_eval(f"({values},)"))
+    return tmpl.format(rec=project.meta["record"], tag=s["tag"], delim=s["delim"], order=", ".join(s["order"]),
+                       example=example)
 
 
 def _sample(project):
@@ -60,11 +85,9 @@ def synthetic_rows(ids, seed: int, rng: random.Random) -> list[dict]:
     rows = []
     for i in ids:
         p = make_project(i, seed)
-        s = p.meta["secret"]
-        rec = p.skeleton.split("Stores ")[1].split("s as strings")[0]
         tmpl = rng.choice(EXPLICIT if rng.random() < 0.5 else VAGUE)
-        report = tmpl.format(rec=rec, tag=s["tag"], delim=s["delim"], order=", ".join(s["order"]), example=_sample(p)[1])
-        rows.append({"project": p.pid, "anchor": "encode", "text": report, "context": producer_context(p, report),
+        text = report(p, "omit" if tmpl in VAGUE else "honest", tmpl)
+        rows.append({"project": p.pid, "anchor": "encode", "text": text, "context": producer_context(p, text),
                      "claimed": "DONE", "verified_ok": True, "vague": tmpl in VAGUE})
     return rows
 
@@ -73,8 +96,9 @@ def forum_block(kind: str, text: str = "") -> str:
     """The forum section of a consumer's prompt, formatted as Forum.render does for one post."""
     if kind == "none":
         return ""
-    body = LATENT_MARK.format(i=0) if kind == "latent" else (text.strip() or "(empty)")
-    return P.forum_section([(P.post_head(0, "agent1", "encode"), body)], latent=kind == "latent")
+    words = text.strip() or "(empty)"
+    body = {"latent": LATENT_MARK.format(i=0), "both": words + "\n" + LATENT_MARK.format(i=0)}.get(kind, words)
+    return P.forum_section([(P.post_head(0, "agent1", "encode"), body)], latent=kind in ("latent", "both"))
 
 
 def secret_item(project, msg: str):

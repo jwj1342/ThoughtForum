@@ -48,6 +48,7 @@ flowchart BT
 - `sandbox.py`：在子进程里跑测试，带超时；在 Linux 和 macOS 上还有资源限制。临时目录跟随 `TMPDIR`。
 - `evaluate.py`：基于执行的评测。`run` 跑一段测试；`hidden` 给出一个方法的整体和隔离两种隐藏测试结果；`evaluate` 评整个项目；`isolated_ok` 给单条回复打分。
 - `validate.py`：挑出 ClassEval 里参考实现自己能过测试的类，结果写在 `data/classeval_valid.json`。
+- `measure.py`：离线 SecretBench 测量的入口（主线实验）。合成生产者上下文，作者的话分如实 / 省略 / 说错，读者经某个信道收到帖子后回答问题、写消费者代码，输出传递率、跟随所知还是所言、用说差，以及移植对照。
 
 ## forum/：多 agent 论坛
 
@@ -131,6 +132,7 @@ flowchart BT
 | `e0s.sh`、`e0s2.sh` | SecretBench 论坛（R10、R11） |
 | `e1s.sh`、`e1s2.sh` | SecretBench 离线评测与训练诊断（R13） |
 | `e0s3.sh`、`e0s4.sh` | 本方法放进 SecretBench 论坛：作者诚实 / 作者把格式说错 |
+| `measure.sh` | 离线 SecretBench 测量（主线）：如实 / 省略 / 说错 × 文字 / 潜在帖子 / 两者都给，以及容量曲线 |
 | `probe_cpu.sh` | 只用 CPU 跑线性探针 |
 
 ## 测试

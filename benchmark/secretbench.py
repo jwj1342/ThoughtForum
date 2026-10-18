@@ -4,19 +4,21 @@ ClassEval interfaces can mostly be inferred from method names and the caller's o
 so even with hidden docstrings (spec=private) a text forum added nothing (E0p). Here every
 project has one producer and three consumers:
 
-- encode(f1, f2, f3): writes a record in a private format: a random 4-letter tag, a delimiter,
+- encode(f1, f2, f3): writes a record in a private format: a random tag (4 letters by default), a delimiter,
   and a field order that differs from the signature order. Only its docstring states the format.
 - decode(s), is_record(s), get_field(s, name): read such records. Their docstrings and their
   visible tests do not depend on the format, so neither the spec nor CI leaks it.
 
 Under spec=private, a consumer can only learn the format from the forum (or by calling encode at
 run time and inferring it, which is allowed; the isolated evaluation uses the reference encode).
-Under spec=full, everyone sees the format: that is the upper bound. The format carries about
-log2(26^4 * 6 * 5) ~ 23 bits; the three consumers need different parts of it.
+Under spec=full, everyone sees the format: that is the upper bound. The format carries
+log2(26^L * 6 * 5) bits for a tag of L letters, about 23 for L = 4; the three consumers need
+different parts of it. `tag_len` changes L, for capacity curves.
 """
 from __future__ import annotations
 
 import itertools
+import math
 import random
 
 from benchmark.tasks import Project, Subtask, _first_test_only
@@ -34,8 +36,8 @@ DOMAINS = [
 DELIMS = ["|", ";", "#", "~", "^", "!"]
 
 
-def _secret(rng, fields):
-    tag = "".join(rng.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(4))
+def _secret(rng, fields, tag_len: int = 4):
+    tag = "".join(rng.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(tag_len))
     delim = rng.choice(DELIMS)
     orders = [list(p) for p in itertools.permutations(fields) if list(p) != fields]
     return tag, delim, rng.choice(orders)
@@ -46,10 +48,18 @@ def _record(tag, delim, order, fields, values):
     return delim.join([tag] + [str(v[f]) for f in order])
 
 
-def make_project(i: int, seed: int = 0) -> Project:
+def secret_bits(tag_len: int = 4) -> float:
+    return round(math.log2(26 ** tag_len * len(DELIMS) * 5), 1)
+
+
+def project_id(i: int, seed: int = 0, tag_len: int = 4) -> str:
+    return f"Secret_{seed}_{i}" if tag_len == 4 else f"Secret{tag_len}_{seed}_{i}"
+
+
+def make_project(i: int, seed: int = 0, tag_len: int = 4) -> Project:
     cls, rec, fields, samples = DOMAINS[i % len(DOMAINS)]
     rng = random.Random(f"secretbench-{seed}-{i}")
-    tag, delim, order = _secret(rng, fields)
+    tag, delim, order = _secret(rng, fields, tag_len)
     f1, f2, f3 = fields
     s0, s1, s2 = (_record(tag, delim, order, fields, v) for v in samples)
     other_tag = "".join(chr((ord(c) - 65 + 7) % 26 + 65) for c in tag)
@@ -184,9 +194,6 @@ def make_project(i: int, seed: int = 0) -> Project:
     deps = {"encode": [], "decode": ["encode"], "is_record": ["encode"], "get_field": ["encode"]}
     subtasks = [Subtask(name=n, doc=docs[n].strip(), deps=deps[n], visible_test=_first_test_only(tests[n]),
                         hidden_test=tests[n], solution=sols[n]) for n in docs]
-    return Project(pid=f"Secret_{seed}_{i}", class_name=cls, skeleton=skeleton, subtasks=subtasks,
-                   meta={"benchmark": "secretbench", "secret": {"tag": tag, "delim": delim, "order": order}})
-
-
-def secret_projects(n: int, seed: int = 0) -> list[Project]:
-    return [make_project(i, seed) for i in range(n)]
+    return Project(pid=project_id(i, seed, tag_len), class_name=cls, skeleton=skeleton, subtasks=subtasks,
+                   meta={"benchmark": "secretbench", "record": rec, "fields": fields,
+                         "secret": {"tag": tag, "delim": delim, "order": order}, "bits": secret_bits(tag_len)})

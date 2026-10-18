@@ -102,6 +102,34 @@ class TestSecretBench(unittest.TestCase):
             self.assertEqual(sec["tag"] in r["text"], not r["vague"])
             self.assertIn(sec["tag"], r["context"][1]["content"])   # the author always knows the format
 
+    def test_speech_variants(self):
+        p = parse_task_spec("secret:1", "", 3, None)[0]
+        true, fake = p.meta["secret"], S.false_secret(p)
+        self.assertTrue(all(fake[k] != true[k] for k in ("tag", "delim", "order")))
+        for tmpl in S.EXPLICIT:
+            honest, lie = S.report(p, "honest", tmpl), S.report(p, "lie", tmpl)
+            self.assertIn(true["tag"], honest)
+            self.assertTrue(fake["tag"] in lie and true["tag"] not in lie)
+        for tmpl in S.VAGUE:
+            self.assertNotIn(true["tag"], S.report(p, "omit", tmpl))
+        p8 = S.project_of("Secret8_0_2")
+        self.assertEqual((len(p8.meta["secret"]["tag"]), p8.pid), (8, "Secret8_0_2"))
+        self.assertGreater(p8.meta["bits"], p.meta["bits"])
+
+    def test_measure_on_the_mock(self):
+        import json
+        import tempfile
+        from benchmark import measure
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+            measure.main(["--backend", "mock", "--n", "2", "--out", d])
+            with open(os.path.join(d, "summary.json")) as f:
+                rows = {(r["speech"], r["channel"], r["transplant"]): r for r in json.load(f)["summary"]}
+        self.assertEqual(len(rows), 1 + 3 * 3 + 1)   # none; text/latent/both per speech; one transplant
+        self.assertIsNotNone(rows[("lie", "text", False)]["said_in_code"])
+        self.assertIsNotNone(rows[("honest", "latent", True)]["other_in_code"])
+
 
 if __name__ == "__main__":
     unittest.main()
