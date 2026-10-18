@@ -102,6 +102,14 @@ class TestSecretBench(unittest.TestCase):
             self.assertEqual(sec["tag"] in r["text"], not r["vague"])
             self.assertIn(sec["tag"], r["context"][1]["content"])   # the author always knows the format
 
+    def test_forum_block_kinds(self):
+        self.assertEqual(S.forum_block("none", "x"), "")
+        self.assertIn("x", S.forum_block("text", "x"))
+        self.assertNotIn("x", S.forum_block("latent", "x"))
+        self.assertTrue("x" in S.forum_block("both", "x") and "<<LATENT:0>>" in S.forum_block("both", "x"))
+        with self.assertRaises(KeyError):   # an unknown kind must not silently fall back to the text
+            S.forum_block("self_step0", "x")
+
     def test_speech_variants(self):
         p = parse_task_spec("secret:1", "", 3, None)[0]
         true, fake = p.meta["secret"], S.false_secret(p)

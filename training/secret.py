@@ -78,17 +78,22 @@ def use(backend, project, name, block, lats, max_new_tokens):
 
 @torch.no_grad()
 def evaluate(backend, rows, arm: str, latents=None, max_new_tokens: int = 384):
-    """Per row: does the reader recover the record, and do its consumer methods pass the hidden tests?"""
+    """Per row: does the reader recover the record, and do its consumer methods pass the hidden tests?
+
+    The reader gets latents[j] if latents are given, else the post's text if arm == "text", else nothing.
+    (Until 2026-10-18 the latent was passed only for arms named exactly self/other, so the step-0 arm
+    `self_step0` silently got the text instead: the R13 correction in doc/research_notes.md.)"""
+    channel = "latent" if latents is not None else ("text" if arm == "text" else "none")
     res = []
     for j, r in enumerate(rows):
         p = project_of(r["project"])
         s = p.meta["secret"]
-        lats = [latents[j]] if arm in ("self", "other") else []
-        msg = LATENT_MARK.format(i=0) if lats else (r["text"] if arm == "text" else "(no message)")
+        lats = [latents[j]] if channel == "latent" else []
+        msg = {"latent": LATENT_MARK.format(i=0), "text": r["text"], "none": "(no message)"}[channel]
         answer, record = ask_secret(backend, p, msg, lats)
         out = {"project": r["project"], "arm": arm, "answer": answer.strip()[:120], "secret_exact": record in answer,
                "tag": s["tag"] in answer, "tag_delim": (s["tag"] + s["delim"]) in answer}
-        block = forum_block("latent" if lats else arm, r["text"])
+        block = forum_block(channel, r["text"])
         for name in CONSUMERS:
             out[name], code = use(backend, p, name, block, lats, max_new_tokens)
             out[name + "_code"] = code[:600]

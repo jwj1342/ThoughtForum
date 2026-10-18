@@ -97,7 +97,7 @@ def forum_block(kind: str, text: str = "") -> str:
     if kind == "none":
         return ""
     words = text.strip() or "(empty)"
-    body = {"latent": LATENT_MARK.format(i=0), "both": words + "\n" + LATENT_MARK.format(i=0)}.get(kind, words)
+    body = {"text": words, "latent": LATENT_MARK.format(i=0), "both": words + "\n" + LATENT_MARK.format(i=0)}[kind]
     return P.forum_section([(P.post_head(0, "agent1", "encode"), body)], latent=kind in ("latent", "both"))
 
 
