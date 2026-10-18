@@ -1,0 +1,12 @@
+[
+  {"n": "D1", "anchor": "D1", "short": "latent thought 审计", "title": "Latent thought 到底有没有在传：按位置分区的因果审计", "kind": "core", "difficulty": 2, "impact": 4.5, "water": 4},
+  {"n": "D2", "anchor": "D2", "short": "统一审计 benchmark", "title": "“这是通信吗？”统一的内容归因 + 等预算 benchmark", "kind": "water", "difficulty": 2.5, "impact": 3.5, "water": 5},
+  {"n": "D3", "anchor": "D3", "short": "传染研究补对照", "title": "给“共享记事本传染”研究补内容对照", "kind": "water", "difficulty": 1, "impact": 2.5, "water": 5},
+  {"n": "D4", "anchor": "D4", "short": "信息不对称下传思考", "title": "信息不对称下的“传思考”", "kind": "core", "difficulty": 3.5, "impact": 4.5, "water": 2, "dy": -14},
+  {"n": "D5", "anchor": "D5", "short": "编码≠被用 / 容量", "title": "“编码了”≠“被用了”：接收方读心能力与信道容量", "kind": "core", "difficulty": 3, "impact": 4, "water": 3},
+  {"n": "D6", "anchor": "D6", "short": "“一个眼神”分解", "title": "“一个眼神”的分解：同权重默契从哪里来", "kind": "core", "difficulty": 2.5, "impact": 4, "water": 3, "dy": 6},
+  {"n": "D7", "anchor": "D7", "short": "latent stigmergy", "title": "Latent stigmergy：把事件里的记事本换成 KV / latent 记忆", "kind": "core", "difficulty": 4, "impact": 5, "water": 1.5},
+  {"n": "D8", "anchor": "D8", "short": "latent 防火墙", "title": "隐式信道的可监控性：latent 防火墙与可审计协议", "kind": "core", "difficulty": 3.5, "impact": 4.5, "water": 3, "dy": 14},
+  {"n": "D9", "anchor": "D9", "short": "权重即消息 / 隐蔽载荷", "title": "参数层：权重即消息，以及“共享初始化即密钥”的隐蔽载荷", "kind": "core", "difficulty": 4, "impact": 4, "water": 1.5},
+  {"n": "D10", "anchor": "D10", "short": "可审计的 RL latent 语言", "title": "RL 训练出的、可审计的 latent 语言", "kind": "hard", "difficulty": 5, "impact": 5, "water": 1}
+]

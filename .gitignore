@@ -1,0 +1,13 @@
+# experiment outputs and model files
+runs/
+*.pt
+*.safetensors
+
+# paper PDFs (not ours to redistribute; literature/tools/fetch_pdfs.py downloads them)
+literature/pdf/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

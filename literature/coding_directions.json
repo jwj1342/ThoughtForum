@@ -1,0 +1,12 @@
+[
+ {"n": "C1", "anchor": "C1", "short": "代码审计", "title": "代码任务上的 latent MAS 审计", "kind": "water", "difficulty": 2, "impact": 4, "water": 4.5},
+ {"n": "C2", "anchor": "C2", "short": "私有信息", "title": "私有信息代码任务：latent 能传多少样本特定信息", "kind": "core", "difficulty": 2.5, "impact": 4.5, "water": 2.5, "dy": -16},
+ {"n": "C3", "anchor": "C3", "short": "subagent 交接", "title": "subagent 交接：KV 交接 vs 文本摘要", "kind": "core", "difficulty": 3.5, "impact": 5, "water": 2},
+ {"n": "C4", "anchor": "C4", "short": "测试回传", "title": "Tester→Coder：执行反馈的隐式回传", "kind": "core", "difficulty": 3, "impact": 4, "water": 3},
+ {"n": "C5", "anchor": "C5", "short": "接口默契", "title": "“一个眼神”的编程版：不交流时的接口默契", "kind": "core", "difficulty": 2.5, "impact": 4.5, "water": 3, "dy": 16},
+ {"n": "C6", "anchor": "C6", "short": "repo 传染对照", "title": "repo 作为记事本：传染研究的内容对照", "kind": "water", "difficulty": 1.5, "impact": 3, "water": 5},
+ {"n": "C7", "anchor": "C7", "short": "共享 KV 记忆", "title": "共享 KV / latent 记忆的编码团队", "kind": "core", "difficulty": 4, "impact": 5, "water": 1.5},
+ {"n": "C8", "anchor": "C8", "short": "审查合谋", "title": "coder–reviewer 合谋与 latent 防火墙", "kind": "core", "difficulty": 3.5, "impact": 4.5, "water": 3},
+ {"n": "C9", "anchor": "C9", "short": "repo→权重", "title": "把 repo 写进权重：参数信道的团队共享及其潜意识风险", "kind": "core", "difficulty": 4, "impact": 4, "water": 2},
+ {"n": "C10", "anchor": "C10", "short": "RL latent 协议", "title": "用 RL 训练可审计的 latent 编码协议", "kind": "hard", "difficulty": 5, "impact": 5, "water": 1}
+]

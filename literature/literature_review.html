@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Implicit Agent Communication</title>
+<meta name="description" content="LLM agents 隐式交流（latent / KV-cache / parameter 等非文字信道）文献索引、综述、精读笔记、研究方向（含 multi-agent coding 聚焦与零信任隐式论坛）与 OpenAI–Hugging Face 事件深挖">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#tab=index">
+    <span class="logo" aria-hidden="true"></span>
+    <span class="brand-text"><strong>Implicit Communication</strong><small>LLM Agents 隐式交流 · 文献索引</small></span>
+  </a>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="index">文献索引</button>
+    <button role="tab" data-tab="review">综述</button>
+    <button role="tab" data-tab="directions">研究方向</button>
+    <button role="tab" data-tab="coding">Coding 聚焦</button>
+    <button role="tab" data-tab="forum">隐式论坛</button>
+    <button role="tab" data-tab="notes">精读笔记</button>
+    <button role="tab" data-tab="incident">事件深挖</button>
+    <button role="tab" data-tab="method">检索方法</button>
+  </nav>
+  <button id="theme-toggle" class="icon-btn" type="button" title="切换明暗主题" aria-label="切换明暗主题">◐</button>
+</header>
+
+<main>
+  <section id="tab-index" class="tab" role="tabpanel">
+    <div class="hero">
+      <p class="eyebrow">2025-06 → 2026-10 · arXiv · ACL / EMNLP / NAACL · NeurIPS / ICML / ICLR</p>
+      <h1>Agent 之间能否“一个眼神就懂”？</h1>
+      <p class="lede">收录 LLM agents 通过 <b>非文字信道</b>（hidden state、KV-cache、embedding、参数）交流的工作，以及与之相邻的隐蔽信道、无消息协调、共享记忆与压缩语言研究。数据来自 <code>index.csv</code>。</p>
+      <div id="stats" class="stats"></div>
+    </div>
+
+    <div class="overview">
+      <section class="panel">
+        <header class="panel-head"><h2>信道谱系</h2><span class="hint">从显式到隐式 · 点击筛选</span></header>
+        <div id="spectrum"></div>
+      </section>
+      <section class="panel">
+        <header class="panel-head"><h2>发表时间线</h2><span class="hint">按月 · 按类别堆叠 · 点击柱子筛选该月</span></header>
+        <div id="timeline"></div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <header class="panel-head"><h2>分类体系</h2><span class="hint">点击卡片筛选 · 可多选</span></header>
+      <div id="taxonomy" class="tax-grid"></div>
+    </section>
+
+    <div class="browser">
+      <aside class="filters" id="filters-wrap">
+        <details id="filters-drawer" open>
+          <summary>筛选条件 <span id="active-count" class="pill-count"></span></summary>
+          <div id="filters"></div>
+        </details>
+      </aside>
+      <div class="results">
+        <div class="results-bar">
+          <label class="search">
+            <span aria-hidden="true">⌕</span>
+            <input id="q" type="search" placeholder="搜索标题、摘要、作者、标签…（按 / 聚焦）" autocomplete="off">
+          </label>
+          <div class="results-tools">
+            <span id="result-count" class="muted"></span>
+            <select id="sort" aria-label="排序">
+              <option value="date-desc">日期 ↓</option>
+              <option value="date-asc">日期 ↑</option>
+              <option value="title">标题 A→Z</option>
+              <option value="venue">Venue</option>
+              <option value="category">类别</option>
+            </select>
+            <div class="seg" role="group" aria-label="视图">
+              <button data-view="cards" type="button">卡片</button>
+              <button data-view="table" type="button">表格</button>
+            </div>
+            <button id="export" class="btn ghost" type="button" title="导出当前筛选结果为 CSV">导出 CSV</button>
+          </div>
+        </div>
+        <div id="results"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-review" class="tab" role="tabpanel">
+    <div class="doc-layout">
+      <nav class="toc" id="review-toc" aria-label="目录"></nav>
+      <article class="doc" id="review-doc"></article>
+    </div>
+  </section>
+
+  <section id="tab-directions" class="tab" role="tabpanel">
+    <div class="doc-layout">
+      <nav class="toc" id="directions-toc" aria-label="目录"></nav>
+      <article class="doc" id="directions-doc"></article>
+    </div>
+  </section>
+
+  <section id="tab-coding" class="tab" role="tabpanel">
+    <div class="doc-layout">
+      <nav class="toc" id="coding-toc" aria-label="目录"></nav>
+      <article class="doc" id="coding-doc"></article>
+    </div>
+  </section>
+
+  <section id="tab-forum" class="tab" role="tabpanel">
+    <div class="doc-layout">
+      <nav class="toc" id="forum-toc" aria-label="目录"></nav>
+      <article class="doc" id="forum-doc"></article>
+    </div>
+  </section>
+
+  <section id="tab-notes" class="tab" role="tabpanel">
+    <div class="doc-layout">
+      <nav class="notes-nav" id="notes-nav" aria-label="精读笔记列表"></nav>
+      <div>
+        <select id="note-select" aria-label="选择精读笔记"></select>
+        <article class="doc" id="notes-doc"></article>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-incident" class="tab" role="tabpanel">
+    <div class="doc-layout">
+      <nav class="toc" id="incident-toc" aria-label="目录"></nav>
+      <article class="doc" id="incident-doc"></article>
+    </div>
+  </section>
+
+  <section id="tab-method" class="tab" role="tabpanel">
+    <div class="doc-layout">
+      <nav class="toc" id="method-toc" aria-label="目录"></nav>
+      <article class="doc" id="method-doc"></article>
+    </div>
+  </section>
+</main>
+
+<footer class="foot"><span id="built"></span> · 编辑 <code>index.csv</code> 后运行 <code>python3 tools/build_site.py</code> 刷新</footer>
+
+<dialog id="paper-modal" aria-label="论文详情"><div id="modal-body"></div></dialog>
+
+<script src="assets/vendor/marked.min.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

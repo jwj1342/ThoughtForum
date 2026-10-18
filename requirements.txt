@@ -1,0 +1,4 @@
+# Installed from the Alliance wheelhouse: pip install --no-index -r requirements.txt
+torch==2.9.1
+transformers==4.57.6
+numpy==2.2.2
