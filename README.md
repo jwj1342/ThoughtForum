@@ -75,11 +75,12 @@ flowchart LR
 |---|---|
 | **潜在信号跟着作者知道的走，而不是作者说的。** 所以它有望成为核对说法的证据，但也会泄露作者没说的东西 | 作者谎称"做完了"时，原版读者从训练过 writer 的帖子里读出真实测试结果的准确率是 0.94，换成别人的帖子是 0.48；线性探针区分谎言和真话 0.91，只看文字 0.71 |
 | **但冻结的读者读不出其中的具体内容。** 不管是池化作者的话，还是从整个上下文读出来，免训练的潜在帖子都传不过私有格式；附在文字旁边，读者照样跟着文字走 | 消费者通过率：只给潜在帖子 0.02 左右，文字 0.66；作者把格式说错时，85% 的读者照着错的写，附上潜在帖子后仍有 84–93% |
+| **绕过作者的嘴，文字证据也更准。** 直接把代码和测试日志贴上论坛，比作者自己写的汇报传得更多，团队谎报完成也更少，只是更贵 | 论坛里跨 agent 的消费者通过率：贴代码 0.68，作者汇报 0.48，潜在帖子 0.01，不交流 0；团队宣布完成、隐藏测试却不过：0.30 对 0.83；提示 token 多 1.7 倍 |
 | **在任务上训练写入端，会收成模板** | 训练后读者写出格式规整、标签却错的记录，例如 `'PZQX~1965~Herbert~Dune'`（真值是 `'JJGF!1965!Herbert!Dune'`） |
 
 > 更正：之前这里写过"零训练的潜在帖子比文字传得更准""读者用得出、说不出"，那来自评测代码的一个 bug（读者实际收到的是文字），已撤回。详见研究笔记的 R13。
 
-完整的实验记录（R1–R14）见 [`doc/research_notes.md`](doc/research_notes.md)。
+完整的实验记录（R1–R15）见 [`doc/research_notes.md`](doc/research_notes.md)。
 
 ## 仓库里有什么
 
@@ -169,5 +170,5 @@ sbatch --account=<你的账户> experiments/e0s3.sh          # 有 Slurm 的集�
 - [`doc/method.md`](doc/method.md)：方法。
 - [`doc/benchmark.md`](doc/benchmark.md)：测量基准。
 - [`doc/code_guide.md`](doc/code_guide.md)：代码导览、实验开关、输出与实验脚本。
-- [`doc/research_notes.md`](doc/research_notes.md)：完整研究笔记，包括文献判断、设计取舍、R1–R14 实验记录、现象与风险。
+- [`doc/research_notes.md`](doc/research_notes.md)：完整研究笔记，包括文献判断、设计取舍、R1–R15 实验记录、现象与风险。
 - [`literature/`](literature/)：文献索引，用浏览器打开 `literature/literature_review.html` 即可离线浏览。论文 PDF 不入库，可用 `literature/tools/fetch_pdfs.py` 重新下载。
