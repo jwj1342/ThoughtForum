@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 
-from model.backends.base import Backend, Generation, LATENT_RE
+from model.backends.base import TEMPERATURE, Backend, Generation, LATENT_RE
 
 
 def _u(*parts) -> float:
@@ -24,7 +24,7 @@ class MockBackend(Backend):
         self.p_correct = p_correct
         self.seed = seed
 
-    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=0.0):
+    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
         meta = meta or {}
         n_lat = sum(len(LATENT_RE.findall(m["content"])) for m in messages)
         n_prompt = sum(self.count_tokens(m["content"]) for m in messages) + 16 * n_lat

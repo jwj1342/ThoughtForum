@@ -5,6 +5,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+# Decoding used by every run so far: Qwen3's own sampling defaults. temperature=0 means greedy.
+TEMPERATURE = 0.6
+
 # Placeholder that a prompt uses to say "insert latent post i here".
 LATENT_MARK = "<<LATENT:{i}>>"
 LATENT_RE = re.compile(r"<<LATENT:(\d+)>>")
@@ -40,7 +43,7 @@ class Backend:
     reads_latents = True
 
     def chat(self, messages: list[dict], latents: list[Latent] = (), *, purpose: str = "",
-             meta: dict | None = None, max_new_tokens: int = 512, temperature: float = 0.0) -> Generation:
+             meta: dict | None = None, max_new_tokens: int = 512, temperature: float = TEMPERATURE) -> Generation:
         raise NotImplementedError
 
     def count_tokens(self, text: str) -> int:

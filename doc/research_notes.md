@@ -217,6 +217,10 @@
 
 ## 4. 已做的实验与结果
 
+> **更正（2026-10-18）：解码方式。** 代码要求贪心解码，但 transformers ≥ 4.50 会把等于其全局默认值的生成参数（`do_sample=False`、`temperature=1` 等）悄悄换成模型自带的值。所以下面所有结果（R1–R13，以及当天的 E1s2、E0s3、E0s4 和离线测量）实际都是**按 Qwen3 的默认参数采样**：temperature 0.6、top-p 0.95、top-k 20。没有显式设随机种子，用的是 PyTorch 的默认种子，所以同一配置重跑大体相同（R1 里 30 个项目有 25 个完全一致），剩下的差异来自 GPU 数值的非确定性。
+>
+> 各条件之间的比较仍然公平，因为解码方式相同；但单个种子的结果里含有采样噪声，需要多种子复核。现在代码显式写明这组采样参数，并关掉了自动替换（`use_model_defaults=False`），运行的就是写出来的配置；`--temperature 0` 才是真正的贪心。
+
 ### smoke 观察（2026-10-17，作业 24329408）
 
 只跑了 3 个项目，每个 3 个 agent，1/3 的 agent 被注入虚报。样本太小，只能看方向，不能下结论。
@@ -236,7 +240,7 @@
 
 ### E0 与 E1a 结果（2026-10-17，作业 24332670、24336678）
 
-设置：30 个 ClassEval 项目，3 个 agent，Qwen3-8B，greedy 解码，单 seed。区间是对项目做 bootstrap 或 Wilson 的 95% CI。完整表格见 `doc/results/E0_table.md` 和 `doc/results/E0_claims_probes.md`。
+设置：30 个 ClassEval 项目，3 个 agent，Qwen3-8B，单 seed。解码当时以为是 greedy，实际是 Qwen3 的默认采样（temperature 0.6、top-p 0.95、top-k 20），见 §4 开头的更正。区间是对项目做 bootstrap 或 Wilson 的 95% CI。完整表格见 `doc/results/E0_table.md` 和 `doc/results/E0_claims_probes.md`。
 
 **R1　零信任闸门有效，但只对“明知虚报”有效。**
 

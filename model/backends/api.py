@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 
-from model.backends.base import Backend, Generation, LATENT_RE
+from model.backends.base import TEMPERATURE, Backend, Generation, LATENT_RE
 
 _THINK = re.compile(r"<think>.*?</think>\s*", re.S)
 
@@ -51,7 +51,7 @@ class APIBackend(Backend):
                     raise
             time.sleep(2 ** attempt)
 
-    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=0.0):
+    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
         if latents or any(LATENT_RE.search(m["content"]) for m in messages):
             raise ValueError("the api backend cannot read latent posts; use --backend hf")
         data = self._post({"model": self.model, "messages": messages, "max_tokens": max_new_tokens,

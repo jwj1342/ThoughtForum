@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 
 from model.backends import DEFAULT_MODEL
+from model.backends.base import TEMPERATURE
 
 CHOICES = {
     # mock: no model (tests). hf: a local HuggingFace model, needed for latent posts. api: any
@@ -75,7 +76,7 @@ class RunConfig:
     overclaim_mode: str = "always"
 
     max_new_tokens: int = 640
-    temperature: float = 0.0
+    temperature: float = TEMPERATURE   # Qwen3's sampling defaults (top-p 0.95, top-k 20); 0 = greedy
     seed: int = 0
     probe: bool = True
     save_latents: bool = False

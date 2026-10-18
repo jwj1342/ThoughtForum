@@ -47,7 +47,8 @@ def ask(backend, cfg, project, post, payload) -> dict:
     for q, tmpl in P.PROBE.items():
         user = tmpl.format(msg=msg, cls=project.class_name, options=", ".join(project.names))
         g = backend.chat([{"role": "system", "content": P.PROBE_SYSTEM}, {"role": "user", "content": user}],
-                         latents, purpose="probe", meta={"question": q}, max_new_tokens=12, temperature=0.0)
+                         latents, purpose="probe", meta={"question": q}, max_new_tokens=12,
+                         temperature=cfg.temperature)
         ans[q] = g.text.strip()[:60]
         ok[q] = score(q, g.text, truth[q], project.names)
     return {"answers": ans, "correct": ok, "truth": truth}

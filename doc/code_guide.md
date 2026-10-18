@@ -93,6 +93,7 @@ flowchart BT
 | `--overclaim-frac 0.34 --overclaim-mode ...` | 让一部分 agent 说不实的话：`always` 直接把状态改成"做完了"，`deceive` 让模型自己写连贯的谎言，`mislead` 把接口格式说错，`pressure` 只施加"尽快完成"的压力 |
 | `--trust blind / attested / crosscheck` | 怎么核对"做完了"：不核对；以可见测试为准；另外还要过同伴写的测试 |
 | `--save-latents true` | 把每条潜在帖子连同真值存成 `latents.pt`，供离线分析和训练 |
+| `--temperature 0.6` | 解码温度，默认是 Qwen3 自带的采样参数（top-p 0.95、top-k 20），之前所有实验都是这样跑的；设为 0 是贪心 |
 
 ## 输出
 

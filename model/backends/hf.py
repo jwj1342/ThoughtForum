@@ -13,7 +13,7 @@ from __future__ import annotations
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
-from model.backends.base import Backend, Generation, Latent, LATENT_RE
+from model.backends.base import TEMPERATURE, Backend, Generation, Latent, LATENT_RE
 
 CONTROL_TOKENS = ("<think>", "</think>", "<|im_start|>", "<|im_end|>")
 
@@ -92,14 +92,18 @@ class HFBackend(Backend):
 
     # ---- generation -------------------------------------------------------------------
     @torch.no_grad()
-    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=0.0):
+    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
+        """Sampling with top-p 0.95 and top-k 20 (Qwen3's defaults), or greedy at temperature 0."""
         emb = self.embed_chat(messages, latents)
         sample = temperature > 0
         gc = GenerationConfig(max_new_tokens=max_new_tokens, eos_token_id=self.model.generation_config.eos_token_id,
                               pad_token_id=self.tok.pad_token_id or self.tok.eos_token_id,
                               do_sample=sample, temperature=temperature if sample else 1.0,
                               top_p=0.95 if sample else 1.0, top_k=20 if sample else 50)
-        out = self.model.generate(inputs_embeds=emb[None], generation_config=gc,
+        # use_model_defaults=False: run exactly this config. Otherwise transformers >= 4.50 silently replaces
+        # every value equal to its global default (do_sample=False, temperature=1, ...) with the model's own,
+        # which turned all earlier "greedy" runs into sampling at the model's defaults.
+        out = self.model.generate(inputs_embeds=emb[None], generation_config=gc, use_model_defaults=False,
                                   attention_mask=torch.ones(1, emb.shape[0], dtype=torch.long, device=self.device))
         new = out[0]  # with inputs_embeds only, generate returns just the new tokens
         return Generation(self.tok.decode(new, skip_special_tokens=True).strip(), emb.shape[0], int(new.shape[0]))
