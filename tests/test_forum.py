@@ -94,6 +94,18 @@ class TestPipeline(unittest.TestCase):
         work = [e for e in events if e["type"] == "work" and e["method"] != "encode"]
         self.assertTrue(work and all(any(r["anchor"] == "encode" for r in e["read"]) for e in work))
 
+    def test_stream_channel(self):
+        p = parse_task_spec("secret:1", "", 3, None)[0]
+        for control in ("none", "zero"):
+            cfg = RunConfig(channel="stream", spec="private", rounds=4, control=control).validate()
+            rec, events, probes = run(p, cfg, MockBackend(p_correct=1.0), seed=6)
+            work = [e for e in events if e["type"] == "work" and e["method"] != "encode"]
+            self.assertTrue(work and all(any(r["anchor"] == "encode" for r in e["read"]) for e in work))
+            self.assertEqual(rec.get("calls_with_latents", 0) > 0, control == "none")   # zero: no segments
+            self.assertEqual(probes, [])
+        with self.assertRaises(ValueError):
+            RunConfig(channel="stream", source="artifact").validate()
+
     def test_memory_and_text_artifact(self):
         p = parse_task_spec("secret:1", "", 3, None)[0]
         for memory in (False, True):

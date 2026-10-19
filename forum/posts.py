@@ -6,7 +6,8 @@ What is fixed, and what the experiment varies:
 - `structure` decides routing. `anchored` gives one thread per method, and a reader gets
   the threads of its own method and its dependencies. `flat` is a single broadcast pool;
   readers get the most recent posts without being told what each post is about.
-- `channel` decides the payload readers see: the author's text, or k latent vectors.
+- `channel` decides the payload readers see: the author's text, k latent vectors, or (stream) the
+  author's session as a segment of the forum's shared KV stream.
 - `trust=attested` adds a tag written by the trusted CI to each post. The tag reports the
   visible-test result of the code at that version, and marks the post stale if the code
   has changed since.
@@ -40,8 +41,8 @@ class Post:
 
 
 class Forum:
-    def __init__(self, cfg, bank: list[Post], seed: int):
-        self.cfg, self.bank = cfg, bank
+    def __init__(self, cfg, bank: list[Post], seed: int, stream=None):
+        self.cfg, self.bank, self.stream = cfg, bank, stream
         self.posts: list[Post] = []
         self.rng = random.Random(seed)
         self._next = len(bank)
@@ -91,8 +92,9 @@ class Forum:
     def _payload(self, post: Post):
         """Apply the content control. Returns (text, latent)."""
         ctl = self.cfg.control
-        if ctl == "shuffle":
-            others = [b for b in self.bank if (b.project, b.anchor) != (post.project, post.anchor)
+        if ctl == "shuffle":   # stream segments exist only in this project's stream
+            pool = self.posts if self.cfg.channel == "stream" else self.bank
+            others = [b for b in pool if (b.project, b.anchor) != (post.project, post.anchor)
                       and (b.latent is not None or self.cfg.channel == "text")]
             if others:
                 o = self.rng.choice(others)
@@ -101,6 +103,8 @@ class Forum:
         if ctl == "zero":
             if self.cfg.channel == "text":
                 return "(message withheld)" if self.cfg.control == "shuffle" else "", None
+            if self.cfg.channel == "stream":
+                return post.text, None
             return post.text, post.latent.blank()
         return post.text, post.latent
 
@@ -117,6 +121,9 @@ class Forum:
             if self.cfg.channel == "latent":
                 body = LATENT_MARK.format(i=len(latents))
                 latents.append(lat)
+            elif self.cfg.channel == "stream":
+                body = P.KV_NOTE
+                latents += [lat] if lat is not None else []
             else:
                 body = text.strip() or "(empty)"
             entries.append((head, body))
@@ -124,7 +131,9 @@ class Forum:
                         "verified_ok": (p.verified or {}).get("ok"), "truth_ok": (p.truth or {}).get("ok"),
                         "truth_iso_ok": (p.truth or {}).get("iso_ok"),
                         "falsified": p.falsified, "stale": stale})
-        return P.forum_section(entries, latent=self.cfg.channel == "latent"), latents, log
+        if self.cfg.channel == "stream":   # one prefix: the selected segments of the shared stream
+            latents = [self.stream.prefix(latents)] if latents else []
+        return P.forum_section(entries, latent=self.cfg.channel in ("latent", "stream")), latents, log
 
     def board(self, project, owner: dict[str, str]) -> str:
         """The explicit skeleton: who works on what, and the 1-bit DONE flag each author sets.

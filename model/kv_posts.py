@@ -10,6 +10,11 @@ author's context contains (its code, the test result, its own words), not only w
 Entries keep their original positions; the reader's tokens are placed after the author's last
 position, so to the reader the post looks like an earlier session with most entries evicted.
 This is the KV-sharing family of LatentMAS / KVComm / C2C, here between untrusted authors.
+
+Several posts are written independently and never attended to each other. Laid side by side
+(`concat`) the reader reads their content but attributes it to the wrong post. `assemble` adds a
+short text caption after each post (who wrote it, on what) that the reader prefills: the caption
+attends to the post just before it, which binds the post to its explicit provenance.
 """
 from __future__ import annotations
 
@@ -20,7 +25,7 @@ import torch
 import torch.nn.functional as F
 from transformers import DynamicCache
 
-from model.backends.base import TEMPERATURE, Generation
+from model.backends.base import TEMPERATURE, Generation, Latent
 
 SINKS = 4
 
@@ -117,15 +122,79 @@ def concat(backend, posts, layout: str = "sequential", dedup: bool = False) -> K
     for t, p in enumerate(posts):
         c = cut if t else 0
         delta = off - c if layout == "sequential" else 0
-        cos, sin = backend.model.model.rotary_emb(torch.zeros(1, device=dev), torch.tensor([[delta]], device=dev))
-        cos, sin = cos[:, None], sin[:, None]                           # [1, 1, 1, head_dim]
-        parts.append([((k[:, :, c:].to(dev).float() * cos + _rotate_half(k[:, :, c:].to(dev).float()) * sin).to(k.dtype),
-                       v[:, :, c:].to(dev)) for k, v in p.layers])
+        parts.append([(_shift(backend, k[:, :, c:], delta), v[:, :, c:].to(dev)) for k, v in p.layers])
         off, end = delta + p.end, max(end, delta + p.end)
     layers = [(torch.cat([q[i][0] for q in parts], 2), torch.cat([q[i][1] for q in parts], 2))
               for i in range(len(parts[0]))]
     return KVPost(layers, end, layers[0][0].shape[2], sum(t.numel() * t.element_size() for kv in layers for t in kv),
                   posts[0].shared)
+
+
+def _shift(backend, k, delta: int):
+    """Keys written at positions p, rotated to positions p + delta."""
+    dev = backend.device
+    cos, sin = backend.model.model.rotary_emb(torch.zeros(1, device=dev), torch.tensor([[delta]], device=dev))
+    cos, sin = cos[:, None], sin[:, None]                               # [1, 1, 1, head_dim]
+    k = k.to(dev).float()
+    return (k * cos + _rotate_half(k) * sin).to(backend.model.dtype)
+
+
+@torch.no_grad()
+def assemble(backend, posts, captions) -> KVPost:
+    """Posts end to end, each followed by its caption, which the reader prefills on top of what is before it."""
+    b, dev = backend, backend.device
+    cache, s, pos = DynamicCache(), 0, 0
+    for p, cap in zip(posts, captions):
+        for i, (k, v) in enumerate(p.layers):
+            cache.update(_shift(b, k, pos), v.to(dev), i)
+        s, pos = s + p.k, pos + p.end
+        ids = b.tok(cap, add_special_tokens=False, return_tensors="pt").input_ids.to(dev)
+        m = ids.shape[1]
+        b.model.model(input_ids=ids, past_key_values=cache, use_cache=True,
+                      position_ids=torch.arange(pos, pos + m, device=dev)[None],
+                      cache_position=torch.arange(s, s + m, device=dev),
+                      attention_mask=torch.ones(1, s + m, dtype=torch.long, device=dev))
+        s, pos = s + m, pos + m
+    layers = [_layer_kv(cache, i) for i in range(len(posts[0].layers))]
+    return KVPost(layers, pos, s, sum(p.nbytes for p in posts), posts[0].shared)
+
+
+class KVStream:
+    """The forum as one append-only KV cache. Each post is the author's session encoded on top of every
+    post before it, so posts can see each other and compose (posts encoded one by one do not: R17);
+    every post is encoded once, by its author. Readers generate after the segments they select."""
+
+    def __init__(self, backend):
+        self.b, self.layers, self.pos, self.segs = backend, None, 0, []
+
+    @torch.no_grad()
+    def append(self, messages, response, meta=None) -> Latent:
+        b, dev = self.b, self.b.device
+        text = b.render(messages + [{"role": "assistant", "content": response}], add_generation_prompt=False)
+        ids = b.tok(text, add_special_tokens=False, return_tensors="pt").input_ids.to(dev)
+        cache = DynamicCache()
+        for i, (k, v) in enumerate(self.layers or []):
+            cache.update(k, v, i)
+        s, m = (self.layers[0][0].shape[2] if self.layers else 0), ids.shape[1]
+        b.model.model(input_ids=ids, past_key_values=cache, use_cache=True,
+                      position_ids=torch.arange(self.pos, self.pos + m, device=dev)[None],
+                      cache_position=torch.arange(s, s + m, device=dev),
+                      attention_mask=torch.ones(1, s + m, dtype=torch.long, device=dev))
+        self.layers = [_layer_kv(cache, i) for i in range(len(b.model.model.layers))]
+        self.segs.append((s, s + m))
+        self.pos += m
+        per = sum(t[:, :, :1].numel() * t.element_size() for kv in self.layers for t in kv)
+        return Latent({"segment": len(self.segs) - 1}, m, nbytes=m * per, origin="stream", meta=dict(meta or {}))
+
+    def prefix(self, posts) -> KVPost:
+        """The segments of `posts`, in stream order; they keep their positions, as if the rest were evicted."""
+        spans = sorted(self.segs[p.data["segment"]] for p in posts)
+        layers = [(torch.cat([k[:, :, a:z] for a, z in spans], 2), torch.cat([v[:, :, a:z] for a, z in spans], 2))
+                  for k, v in self.layers]
+        return KVPost(layers, self.pos, layers[0][0].shape[2], sum(p.nbytes for p in posts))
+
+    def chat(self, prefix, messages, *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
+        return chat_after(self.b, prefix, messages, max_new_tokens=max_new_tokens, temperature=temperature)
 
 
 @torch.no_grad()

@@ -32,6 +32,32 @@ class MockWriter(Writer):
         return Latent(rec, self.k, nbytes=self.k * 4096 * 2, origin=purpose)
 
 
+class MockStream:
+    """The shared stream on the mock backend: a post is a MockWriter record, a prefix the list of them."""
+
+    def __init__(self, backend, k: int = 16):
+        self.backend, self.writer = backend, MockWriter(k)
+
+    def append(self, messages, response, meta=None) -> Latent:
+        return self.writer.write(messages, response, meta=meta, purpose="stream")
+
+    def prefix(self, posts):
+        return list(posts)
+
+    def chat(self, prefix, messages, **kw):
+        return self.backend.chat(messages, prefix, **kw)
+
+
+def make_stream(backend):
+    """A fresh shared stream for one project: MockStream on the mock backend, KVStream otherwise."""
+    if backend.name == "mock":
+        return MockStream(backend)
+    if not backend.reads_latents:
+        raise ValueError(f"the {backend.name} backend cannot hold a latent stream; use --backend hf")
+    from model.kv_posts import KVStream
+    return KVStream(backend)
+
+
 def make_writer(backend, k: int = 16, head: str = "") -> Writer:
     """MockWriter for the mock backend; GistWriter if a head is given (`random:16` = the method);
     ChunkMeanWriter otherwise."""

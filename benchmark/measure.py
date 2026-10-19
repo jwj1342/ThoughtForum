@@ -24,7 +24,8 @@ order), or the author's KV cache placed before the reader's prompt (`kv`, model/
 
 `--posts M` is the load setting: the reader gets M posts at once, its producer's and those of M - 1
 other projects, in a random order, each headed with its class. `kv` posts are laid end to end, or with
-`--layout parallel` all at the positions they were written at; `--dedup` keeps their shared system turn once;
+`--layout parallel` all at the positions they were written at, or with `--layout captioned` each followed by
+a text caption the reader prefills (its head line: who wrote it, on what); `--dedup` keeps the shared system turn once;
 `--joint` is the diagnostic: the M sessions are encoded together in one pass, as if one author had them all.
 
 Writers: `random:K` is the method (untrained gist head with K queries), `chunk:K` the pooling baseline;
@@ -200,7 +201,8 @@ def main(argv=None):
     ap.add_argument("--writer", default="random:16", help="comma-separated: random:K (the method), chunk:K, or a head path")
     ap.add_argument("--consumers", default=",".join(TAGGED))
     ap.add_argument("--posts", type=int, default=0, help="M > 0: the load setting with M posts per reader")
-    ap.add_argument("--layout", default="sequential", choices=("sequential", "parallel"), help="kv posts under load")
+    ap.add_argument("--layout", default="sequential", choices=("sequential", "parallel", "captioned"),
+                    help="kv posts under load")
     ap.add_argument("--dedup", action="store_true", help="kv posts under load: keep the shared system turn once")
     ap.add_argument("--joint", action="store_true", help="kv posts under load: encode the M sessions in one pass")
     ap.add_argument("--max-new-tokens", type=int, default=384)
@@ -239,6 +241,11 @@ def main(argv=None):
                     if ch == "kv" and a.joint:
                         joint = [m for x in idx for m in producer_context(projects[x], posts[x][0])]
                         lat = writers[w].write(joint[:-1], joint[-1]["content"])
+                    elif ch == "kv" and a.layout == "captioned":
+                        from model.kv_posts import assemble
+                        caps = [P.post_head(t, f"agent{t + 1}", f"{projects[x].class_name}.encode") + ": the session above\n"
+                                for t, x in enumerate(idx)]
+                        lat = assemble(backend, [posts[x][1] for x in idx], caps)
                     elif ch == "kv":
                         from model.kv_posts import concat
                         lat = concat(backend, [posts[x][1] for x in idx], a.layout, a.dedup)

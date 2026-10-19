@@ -38,7 +38,7 @@ flowchart BT
   - `ChunkMeanWriter` 是旧的池化基线；
   - `WriteHead` 是查询向量加一个可训练的映射，训练只作消融。
 - `read_adapter.py`：读取侧可训练的映射（E1a 消融）。
-- `kv_posts.py`：KV 帖子，是和 LatentMAS、KVComm 同一类的对照。帖子就是作者写完汇报时手里的 KV cache，可以整份给，也可以每层每个头只留 B 条：`snap` 留作者汇报最关注的位置，`recent` 留最后 B 条。读者的提示接在这份 cache 之后生成。
+- `kv_posts.py`：KV 帖子，是和 LatentMAS、KVComm 同一类的方法。`KVStream` 是论坛的共享潜在流：每条帖子是作者的会话，接在流里已有的所有帖子后面编码；读者在它选中的那几段之后生成（`--channel stream`）。其余是离线测量用的：帖子就是作者写完汇报时手里的 KV cache，可以整份给，也可以每层每个头只留 B 条：`snap` 留作者汇报最关注的位置，`recent` 留最后 B 条。读者的提示接在这份 cache 之后生成。
 
 ## benchmark/：任务与评测
 
@@ -84,7 +84,7 @@ flowchart BT
 | `--backend mock / hf / api` | 假后端、本地模型、兼容 OpenAI 的 API（只支持文字） |
 | `--model` | 本地路径或 Hub 名字（默认读环境变量 `LF_MODEL`，否则用 `Qwen/Qwen3-8B`）；用 API 时写服务商的模型名 |
 | `--api-base`、`--api-key-env`、`--api-extra` | API 地址；存放 key 的环境变量名（默认 `LF_API_KEY`）；附加到每个请求里的 JSON |
-| `--channel none / text / latent` | 不交流、发文字、发潜在帖子 |
+| `--channel none / text / latent / stream` | 不交流、发文字、发潜在帖子、写进共享潜在流（只支持 `--source report`） |
 | `--writer-head random:16` | 潜在帖子用本方法（16 个未训练的查询向量）；不给就是旧的池化版；给 `.pt` 路径就加载训练过的 head |
 | `--control none / shuffle / zero` | 读者收到的帖子保持原样、换成别人的、换成空的（内容对照） |
 | `--source report / artifact` | 帖子读自作者的汇报，或者由系统直接读代码和测试日志；文字信道下 `artifact` 就是直接贴代码 |
@@ -135,6 +135,7 @@ flowchart BT
 | `e1s.sh`、`e1s2.sh` | SecretBench 离线评测与训练诊断（R13） |
 | `e0s3.sh`、`e0s4.sh` | 本方法放进 SecretBench 论坛：作者诚实 / 作者把格式说错 |
 | `measure.sh` | 离线 SecretBench 测量（主线）：如实 / 省略 / 说错 × 文字 / 潜在帖子 / 两者都给，以及容量曲线 |
+| `e0st.sh` | 共享潜在流接入 SecretBench 论坛：作者诚实 / 全员说错格式 |
 | `measure_kv.sh` | 离线测量 KV 帖子（R16、R17）：整份、按汇报注意力选 B 条、最后 B 条、均匀 B 条；对照文字、贴代码、会话原文；容量；同时收到 M 条帖子的负载 |
 | `probe_cpu.sh` | 只用 CPU 跑线性探针 |
 

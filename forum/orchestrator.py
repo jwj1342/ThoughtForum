@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from benchmark.evaluate import evaluate
 from benchmark.workspace import Workspace
+from model.writers import make_stream
 from forum.agent import Agent
 from forum.posts import Forum
 from forum.probe import probe_project
@@ -21,6 +22,7 @@ class Ctx:
     project: object
     ws: Workspace
     forum: Forum
+    stream: object = None          # the project's shared KV stream; None unless channel=stream
     owner: dict = field(default_factory=dict)
     stats: Counter = field(default_factory=Counter)
     events: list = field(default_factory=list)
@@ -33,8 +35,9 @@ class Ctx:
 
 def run_project(project, backend, writer, cfg, bank: list, seed: int) -> tuple[dict, list, list]:
     ws = Workspace(project)
-    forum = Forum(cfg, bank, seed)
-    ctx = Ctx(cfg, backend, writer, project, ws, forum)
+    stream = make_stream(backend) if cfg.channel == "stream" else None
+    forum = Forum(cfg, bank, seed, stream)
+    ctx = Ctx(cfg, backend, writer, project, ws, forum, stream=stream)
     n_over = round(cfg.overclaim_frac * cfg.n_agents)
     agents = [Agent(f"agent{i}", ctx, overclaim=i < n_over) for i in range(cfg.n_agents)]
     rng = random.Random(seed)
@@ -67,5 +70,5 @@ def run_project(project, backend, writer, cfg, bank: list, seed: int) -> tuple[d
         "unknown_status": sum(p.claimed == "UNKNOWN" for p in posts),
         **{k: int(v) for k, v in ctx.stats.items()},
     }
-    probes = probe_project(backend, cfg, project, posts, seed) if (cfg.probe and cfg.channel != "none") else []
+    probes = probe_project(backend, cfg, project, posts, seed) if (cfg.probe and cfg.channel in ("text", "latent")) else []
     return rec, ctx.events, probes

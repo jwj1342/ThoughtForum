@@ -87,8 +87,10 @@ class Agent:
 
     def _llm(self, msgs, latents, purpose, meta, max_new_tokens):
         c = self.ctx
-        g = c.backend.chat(msgs, latents, purpose=purpose, meta=meta, max_new_tokens=max_new_tokens,
-                           temperature=c.cfg.temperature)
+        chat = (lambda m, lats, **kw: c.stream.chat(lats[0], m, **kw)) if c.cfg.channel == "stream" and latents \
+            else c.backend.chat
+        g = chat(msgs, latents, purpose=purpose, meta=meta, max_new_tokens=max_new_tokens,
+                 temperature=c.cfg.temperature)
         c.stats["prompt_tokens"] += g.prompt_tokens
         c.stats["gen_tokens"] += g.gen_tokens
         c.stats["calls"] += 1
@@ -216,6 +218,11 @@ class Agent:
             if cfg.source == "artifact":   # post the committed code and CI log, keep only the STATUS line
                 text = f"STATUS: {claimed}\n" + art
             c.stats["payload_slots"] += c.backend.count_tokens(text)
+        if cfg.channel == "stream":   # the author's session, encoded on top of the forum's stream
+            lat = c.stream.append(rep_msgs, text, meta={"anchor": st.name, "visible_ok": vis.ok})
+            c.stats["latent_bytes"] += lat.nbytes
+            c.stats["payload_slots"] += lat.k
+            return text, lat, None
         if cfg.channel != "latent":
             return text, None, None
         if cfg.source == "report":   # read in the author's own context

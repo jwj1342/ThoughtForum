@@ -11,8 +11,10 @@ CHOICES = {
     # mock: no model (tests). hf: a local HuggingFace model, needed for latent posts. api: any
     # OpenAI-compatible endpoint (text only), key from the environment variable api_key_env.
     "backend": ("mock", "hf", "api"),
-    # what a forum post carries to readers
-    "channel": ("none", "text", "latent"),
+    # what a forum post carries to readers. stream: the forum is one append-only KV cache; each post is
+    # the author's session encoded on top of all posts before it, and readers generate after the
+    # segments of the posts they get (model/kv_posts.py, KVStream)
+    "channel": ("none", "text", "latent", "stream"),
     # how posts are routed: threads keyed by method name, or one broadcast pool without topics
     "structure": ("anchored", "flat"),
     # blind: readers get posts as written. attested: the trusted CI tags each post with what
@@ -90,8 +92,10 @@ class RunConfig:
             raise ValueError("controls need a channel")
         if self.source == "artifact" and self.channel == "none":
             raise ValueError("source=artifact needs a channel")
-        if self.backend == "api" and self.channel == "latent":
+        if self.backend == "api" and self.channel in ("latent", "stream"):
             raise ValueError("latent posts need a local model: use --backend hf (the api backend is text only)")
+        if self.channel == "stream" and self.source != "report":
+            raise ValueError("stream posts are the author's own session: source=report")
         return self
 
     def replace(self, **kw) -> "RunConfig":

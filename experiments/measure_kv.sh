@@ -13,8 +13,12 @@
 #   tasks 7, 8: load, M = 4 and 16: the sessions as text (transcript), and whole kv posts with the shared
 #           system turn kept once, end to end or at parallel positions
 #   task 9: diagnostic, M = 4: the M sessions encoded together in one pass (joint) instead of one by one
+#   task 10: load, M = 4 and 16: each kv post followed by a caption the reader prefills (who wrote it, on what)
+#   task 11: load, M = 8 (the most with distinct class names; M = 16 repeats each class): text, transcript,
+#            kv posts encoded one by one, and kv encoded together (joint, i.e. an append-only shared stream)
+#   task 12: load, M = 2: kv one by one vs together
 # Task 0 also ran kv:recent:64 without the first 4 entries (attention sinks); task 2 replaces it.
-# Run from the repo root:  sbatch --array=0-9 experiments/measure_kv.sh   or   TASK=1 bash experiments/measure_kv.sh
+# Run from the repo root:  sbatch --array=0-12 experiments/measure_kv.sh   or   TASK=1 bash experiments/measure_kv.sh
 #SBATCH --job-name=lf-measure-kv
 #SBATCH --time=03:00:00
 #SBATCH --gpus=h100_3g.40gb:1
@@ -50,4 +54,12 @@ case "$TASK_ID" in
      "${L[@]}" --channel kv --dedup --layout parallel --out "$OUT/load_${M}_parallel" ;;
   9) python -m benchmark.measure --n 40 --writer kv:full --speech honest,lie --posts 4 --channel kv --joint \
          --out "$OUT/load_4_joint" ;;
+  10) C=(python -m benchmark.measure --n 40 --speech honest,lie --channel kv --layout captioned)
+      "${C[@]}" --writer kv:full,kv:snap:256 --posts 4 --out "$OUT/load_4_captioned"
+      "${C[@]}" --writer kv:full --posts 16 --out "$OUT/load_16_captioned" ;;
+  11|12) M=$([ "$TASK_ID" = 11 ] && echo 8 || echo 2)
+      L=(python -m benchmark.measure --n 40 --writer kv:full --speech honest,lie --posts "$M")
+      [ "$M" = 8 ] && "${L[@]}" --channel text,transcript --out "$OUT/load_${M}_text"
+      "${L[@]}" --channel kv --out "$OUT/load_${M}_kv"
+      "${L[@]}" --channel kv --joint --out "$OUT/load_${M}_joint" ;;
 esac
