@@ -4,8 +4,8 @@
     python -m analysis.stats measure runs/measure_kv_<id>/*/rows.jsonl --ref "lie/text/-/1"
 
 An item is one consumer method of one project; it passes when its isolated hidden tests pass.
-- forum: SecretBench consumers none of whose producers was written by the consumer's own author
-  (the ones that measure the channel); with --items all, every method.
+- forum: methods with dependencies none of which the method's own author wrote (the ones that
+  measure the channel: SecretBench consumers, ClassEval callers); with --items all, every method.
 - measure: every (project, consumer, seed) row of benchmark/measure.py, grouped by speech /
   channel / load (and "T" for the transplant control); seeds are repeated measures of one item.
 
@@ -25,20 +25,21 @@ import random
 from collections import defaultdict
 
 from analysis.paired import sign_test
-from benchmark.secretbench import CONSUMERS
 
 
 def forum_items(cond_dir: str, which: str = "cross") -> dict:
-    """{(project, method): passed} for one forum condition directory."""
+    """{(project, method, seed): passed} for one forum condition directory."""
+    with open(os.path.join(cond_dir, "config.json")) as f:
+        seed = json.load(f).get("seed", 0)
     out = {}
     for line in open(os.path.join(cond_dir, "projects.jsonl")):
         r = json.loads(line)
         methods = r["methods"]
         for m, v in methods.items():
-            if which == "cross":
-                if m not in CONSUMERS or v.get("author") in {methods[d].get("author") for d in CONSUMERS[m]}:
-                    continue
-            out[(r["project"], m)] = bool(v["iso_ok"])
+            deps = v.get("deps", [])
+            if which == "cross" and (not deps or v.get("author") in {methods[d].get("author") for d in deps}):
+                continue
+            out[(r["project"], m, seed)] = bool(v["iso_ok"])
     return out
 
 
@@ -55,8 +56,8 @@ def measure_items(paths) -> dict:
 
 def _by_project(items: dict) -> dict:
     g = defaultdict(list)
-    for (p, _), ok in items.items():
-        g[p].append(ok)
+    for key, ok in items.items():   # key[0] is the project
+        g[key[0]].append(ok)
     return g
 
 
@@ -104,12 +105,13 @@ def holm(ps: list[float]) -> list[float]:
 
 
 def report(conds: dict, ref: str | None = None, n_boot: int = 4000) -> str:
+    conds = {k: v for k, v in conds.items() if v}   # e.g. a forum run in which no reader had another's post
     lines = ["| condition | items | projects | pass rate [95% CI] |", "|---|---|---|---|"]
     for name, items in conds.items():
         m, lo, hi = cluster_ci(items, n_boot)
         lines.append(f"| {name} | {len(items)} | {len(_by_project(items))} | {m:.3f} [{lo:.3f}, {hi:.3f}] |")
     names = list(conds)
-    pairs = [(ref, n) for n in names if n != ref] if ref else [(x, y) for i, x in enumerate(names) for y in names[i + 1:]]
+    pairs = [(ref, n) for n in names if n != ref] if ref in conds else [(x, y) for i, x in enumerate(names) for y in names[i + 1:]]
     res = [compare(conds[x], conds[y], n_boot) for x, y in pairs]
     adj = holm([r["p"] for r in res])
     lines += ["", "| B vs A | B - A [95% CI] | projects | shared items | A only / B only | McNemar p (Holm) |",
@@ -130,9 +132,12 @@ def main(argv=None):
     ap.add_argument("--boot", type=int, default=4000)
     a = ap.parse_args(argv)
     paths = [p for pat in a.paths for p in sorted(glob.glob(pat))]
-    if a.kind == "forum":
-        conds = {os.path.relpath(d.rstrip("/")): forum_items(d, a.items) for d in paths
-                 if os.path.exists(os.path.join(d, "projects.jsonl"))}
+    if a.kind == "forum":   # the same condition under several seeds pools into one entry
+        conds = defaultdict(dict)
+        for d in paths:
+            if os.path.exists(os.path.join(d, "projects.jsonl")):
+                conds[os.path.basename(d.rstrip("/"))].update(forum_items(d, a.items))
+        conds = dict(conds)
     else:
         conds = measure_items(paths)
         if a.only:

@@ -26,7 +26,7 @@ def evaluate(project, ws: Workspace) -> dict:
     for s in project.subtasks:
         r, iso = hidden(project, ws, s.name)
         per[s.name] = {"ok": r.ok, "iso_ok": iso.ok, "passed": r.passed, "total": r.total,
-                       "author": ws.author.get(s.name), "code": ws.code.get(s.name)}
+                       "author": ws.author.get(s.name), "deps": s.deps, "code": ws.code.get(s.name)}
     dep = [s for s in project.subtasks if s.deps]
     integ = run(project, ws.assemble(), project.integration_test).ok if project.integration_test else None
     return {"methods": per, "integration_ok": integ,
