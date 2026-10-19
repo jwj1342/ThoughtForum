@@ -196,6 +196,12 @@ class KVStream:
     def chat(self, prefix, messages, *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
         return chat_after(self.b, prefix, messages, max_new_tokens=max_new_tokens, temperature=temperature)
 
+    def close(self):
+        """Free the stream's GPU memory (a project's stream is several GB)."""
+        self.layers, self.segs = None, []
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
 
 @torch.no_grad()
 def chat_after(backend, post: KVPost, messages, *, max_new_tokens=512, temperature=TEMPERATURE) -> Generation:

@@ -5,6 +5,7 @@
 #   task 0: honest authors: stream, stream with shuffled segments, text report
 #   task 1: every author misstates its method's format (mislead): stream, text report
 #   task 2: the text version of a stream post (source=session: the author's whole session as text), honest and mislead
+#   task 3: task 0 without its first condition (the stream run of job 24548747 finished; the rest ran out of memory)
 # Run from the repo root:  sbatch --array=0-2 experiments/e0st.sh
 #SBATCH --job-name=lf-e0st
 #SBATCH --time=05:00:00
@@ -25,6 +26,8 @@ case "$TASK_ID" in
   1) M=(--overclaim-frac 1.0 --overclaim-mode mislead)
      python -m forum.run "${COMMON[@]}" "${M[@]}" --channel stream --out "$OUT/mislead"
      python -m forum.run "${COMMON[@]}" "${M[@]}" --channel text --out "$OUT/mislead" ;;
+  3) python -m forum.run "${COMMON[@]}" --channel stream --control shuffle --out "$OUT/honest"
+     python -m forum.run "${COMMON[@]}" --channel text --out "$OUT/honest" ;;
   2) python -m forum.run "${COMMON[@]}" --channel text --source session --out "$OUT/honest"
      python -m forum.run "${COMMON[@]}" --overclaim-frac 1.0 --overclaim-mode mislead --channel text --source session \
          --out "$OUT/mislead" ;;

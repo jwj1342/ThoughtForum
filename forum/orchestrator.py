@@ -51,6 +51,8 @@ def run_project(project, backend, writer, cfg, bank: list, seed: int) -> tuple[d
             a.turn(rnd)
         if all(forum.closed(s.name) for s in project.subtasks):
             break
+    if stream is not None:   # agents and ctx refer to each other, so the stream would wait for the GC
+        stream.close()
     final = evaluate(project, ws)
     latest = {s.name: forum.latest(s.name) for s in project.subtasks}
     declared = all(p is not None and p.claimed == "DONE" for p in latest.values())

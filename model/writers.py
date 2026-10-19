@@ -47,6 +47,9 @@ class MockStream:
     def chat(self, prefix, messages, **kw):
         return self.backend.chat(messages, prefix, **kw)
 
+    def close(self):
+        pass
+
 
 def make_stream(backend):
     """A fresh shared stream for one project: MockStream on the mock backend, KVStream otherwise."""
