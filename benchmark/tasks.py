@@ -16,10 +16,14 @@ from dataclasses import dataclass, field
 class Subtask:
     name: str
     doc: str               # signature + docstring, as shown to agents
-    deps: list[str]        # other methods of the same class that this one calls
+    deps: list[str]        # other methods of the same class it depends on (and whose posts it reads)
     visible_test: str      # test class reduced to its first test case
     hidden_test: str       # full test class for this method
     solution: str = ""     # reference implementation (never shown to agents)
+    calls: list[str] | None = None   # the methods it may call; None: its deps. Others are stubs when it is tested alone
+
+    def callable(self) -> list[str]:
+        return self.deps if self.calls is None else self.calls
 
 
 @dataclass

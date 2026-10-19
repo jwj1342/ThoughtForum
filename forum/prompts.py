@@ -91,9 +91,16 @@ PROBE = {
 
 
 # ---- builders shared by the forum and the offline benchmark (benchmark/secret_tasks.py) ----
-def deps_note(deps) -> str:
-    return (" It may call these methods, which teammates implement: "
-            + ", ".join(f"`{d}`" for d in deps) + ".") if deps else ""
+def deps_note(st) -> str:
+    """What the method may rely on: the methods it may call, or (when it may call none of its deps) the
+    formats it has to handle itself."""
+    calls, deps = st.callable(), st.deps
+    if calls:
+        return " It may call these methods, which teammates implement: " + ", ".join(f"`{d}`" for d in calls) + "."
+    if deps:
+        return (" It must not call other methods of the class; it has to handle the formats of "
+                + " and ".join(f"`{d}`" for d in deps) + " itself.")
+    return ""
 
 
 def transcript(messages) -> str:

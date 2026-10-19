@@ -175,7 +175,7 @@ class Agent:
             fb = "".join(P.OWN.format(name=d, code=self.last[d][0]) for d in st.deps if d in self.last) + fb
         msgs = [{"role": "system", "content": self.system},
                 {"role": "user", "content": P.IMPLEMENT.format(spec=self._spec({st.name}), forum=block, name=st.name,
-                                                               cls=c.project.class_name, deps=P.deps_note(st.deps), feedback=fb)}]
+                                                               cls=c.project.class_name, deps=P.deps_note(st), feedback=fb)}]
         g = self._llm(msgs, latents, "implement", {"subtask": st, "agent": self.name, "attempt": self.attempt},
                       cfg.max_new_tokens)
         code = normalize_method(g.text, st.name)

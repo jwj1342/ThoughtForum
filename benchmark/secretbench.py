@@ -372,8 +372,10 @@ def make_project(i: int, seed: int = 0, tag_len: int = 4) -> Project:
     skeleton = (f'class {cls}:\n    """\n    Stores {rec}s as strings in two project-specific formats: records and exports.\n    """\n\n'
                 f'    def __init__(self):\n        pass\n\n' + "\n\n".join(docs.values()) + "\n")
     deps = {"encode": [], "export": [], **CONSUMERS}
+    # consumers depend on the producers' formats but may not call them (or each other): a consumer that
+    # delegated to reference code, or called `encode` to infer its format, would pass without knowing it
     subtasks = [Subtask(name=k, doc=docs[k].strip(), deps=deps[k], visible_test=_first_test_only(tests[k]),
-                        hidden_test=tests[k], solution=sols[k]) for k in docs]
+                        hidden_test=tests[k], solution=sols[k], calls=[]) for k in docs]
     return Project(pid=project_id(i, seed, tag_len), class_name=cls, skeleton=skeleton, subtasks=subtasks,
                    meta={"benchmark": "secretbench", "record": rec, "fields": fields, "ints": ints,
                          "samples": samples, "formats": {"encode": A, "export": B},

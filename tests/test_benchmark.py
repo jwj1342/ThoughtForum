@@ -98,6 +98,15 @@ class TestSecretBench(unittest.TestCase):
                 wrong = sol.replace(repr(p.meta["formats"][d]["delim"]), repr(S.false_format(p, d)["delim"]))
                 self.assertTrue(isolated_ok(p, name, f"```python\n{sol}```")[0], name)
                 self.assertFalse(isolated_ok(p, name, f"```python\n{wrong}```")[0], name)
+        # nor can a consumer pass by delegating to the (reference) methods it may not call
+        p = make_project(5)
+        f = p.meta["fields"]
+        cheats = {"get_field": "def get_field(self, s, name):\n    return self.decode(s)[name]\n",
+                  "migrate": "def migrate(self, s):\n    return self.export(**self.decode(s))\n",
+                  "is_record": "def is_record(self, s):\n    try:\n        self.decode(s)\n        return True\n"
+                               "    except ValueError:\n        return False\n"}
+        for name, code in cheats.items():
+            self.assertFalse(isolated_ok(p, name, f"```python\n{code}```")[0], name)
 
     def test_reports_and_questions(self):
         p = make_project(7)

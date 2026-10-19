@@ -89,12 +89,17 @@ class Workspace:
         return self._render(self._refs())
 
     def isolated(self, name: str) -> str:
-        """Every other method at its reference solution, `name` as the team wrote it.
+        """`name` as the team wrote it, every other method at its reference solution.
 
-        A method's hidden test then measures only its own code, not the brokenness of
-        methods it calls. This separates being misled from mere dependency failure.
+        A method's hidden test then measures only its own code, not the brokenness of the methods it
+        calls. This separates being misled from mere dependency failure. A task that lists the methods
+        it may call (`Subtask.calls`, as SecretBench does) gets stubs that raise for all the others, so it
+        cannot pass by delegating to correct reference code it was never meant to call.
         """
-        mix = {k: v for k, v in self._refs().items() if k != name}
+        st = self.p.subtask(name)
+        allowed = set(self._refs()) if st.calls is None else set(st.calls)
+        stub = lambda k: f"def {k}(self, *args, **kwargs):\n    raise NotImplementedError({k!r} + ' is not available here')\n"
+        mix = {k: v if k in allowed else stub(k) for k, v in self._refs().items() if k != name}
         if name in self.code:
             mix[name] = self.code[name]
         return self._render(mix)

@@ -115,6 +115,6 @@ def use_item(project, name: str, block: str):
     """(prompt, reference reply, system message) for implementing consumer `name` with `block`."""
     st = project.subtask(name)
     prompt = P.IMPLEMENT.format(spec=private_skeleton(project.skeleton, {name}), forum=block, name=name,
-                                cls=project.class_name, deps=P.deps_note(st.deps), feedback="")
+                                cls=project.class_name, deps=P.deps_note(st), feedback="")
     return prompt, f"```python\n{normalize_method(st.solution, name)}```", P.SYSTEM.format(agent="agent2", n=3)
 
