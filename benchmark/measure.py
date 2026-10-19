@@ -9,7 +9,8 @@ it depends on (one, or two for `migrate`) through one channel and implements the
 is also asked what each producer returns.
 
 Channels:
-- none: no posts, the floor.
+- none: no posts, the floor. full_spec: no posts, but every docstring is shown, formats included:
+  the ceiling.
 - text: the author's report. artifact: the producer's code and CI result as text (the same under
   every speech). session: the author's whole session as text.
 - latent: k soft tokens read from the author's context (GistWriter, `--latent-head`).
@@ -42,7 +43,7 @@ from benchmark.secretbench import CONSUMERS, PRODUCERS, make_project
 from forum import prompts as P
 
 log = logging.getLogger("measure")
-CHANNELS = ("none", "text", "artifact", "session", "latent", "kv", "stream")
+CHANNELS = ("none", "full_spec", "text", "artifact", "session", "latent", "kv", "stream")
 TEXTS = ("text", "artifact", "session")
 LATENTS = ("latent", "kv", "stream")
 
@@ -88,10 +89,10 @@ def share(code, ts):
 
 
 def conditions(speeches, channels, transplant):
-    out = [("-", "none", False)] if "none" in channels else []
-    out += [("-", "artifact", False)] if "artifact" in channels else []
+    fixed = ("none", "full_spec", "artifact")   # the same under every speech
+    out = [("-", ch, False) for ch in fixed if ch in channels]
     for sp in speeches:
-        out += [(sp, ch, False) for ch in channels if ch not in ("none", "artifact")]
+        out += [(sp, ch, False) for ch in channels if ch not in fixed]
         if transplant and sp == "honest":
             out += [(sp, ch, True) for ch in channels if ch in LATENTS]
     return out
@@ -131,7 +132,7 @@ def run_project(backend, i, projects, sp, ch, transplant, a, writers, rng):
 
     answers = {}
     for d in PRODUCERS:   # can the reader say what the producer returns, from that producer's post alone?
-        chat, block, _ = reader(backend, ch, [own[d]], stream)
+        chat, block, _ = reader(backend, "none" if ch in ("none", "full_spec") else ch, [own[d]], stream)
         msg = block.strip() or "(no message)"
         q, truth = question(p, d, msg)
         g = chat([{"role": "system", "content": P.PROBE_SYSTEM}, {"role": "user", "content": q}], 60,
@@ -144,8 +145,10 @@ def run_project(backend, i, projects, sp, ch, transplant, a, writers, rng):
         if a.load:
             posts += distract[: a.load - len(posts)]
             rng.shuffle(posts)
-        chat, block, entries = reader(backend, ch, posts if ch != "none" else [], stream, qualified=bool(a.load))
-        prompt, _, system = use_item(p, name, block)
+        silent = ch in ("none", "full_spec")
+        chat, block, entries = reader(backend, "none" if silent else ch, [] if silent else posts, stream,
+                                      qualified=bool(a.load))
+        prompt, _, system = use_item(p, name, block, full_spec=ch == "full_spec")
         g = chat([{"role": "system", "content": system}, {"role": "user", "content": prompt}], a.max_new_tokens,
                  purpose="implement", meta={"subtask": p.subtask(name), "agent": "reader", "attempt": 0})
         ok, code = isolated_ok(p, name, g.text)
@@ -158,7 +161,7 @@ def run_project(backend, i, projects, sp, ch, transplant, a, writers, rng):
             "other": share(code, tags(src, deps, lambda pr, d: pr.meta["formats"][d])) if transplant else None,
             "answers": {d: answers[d] for d in deps},
             "prompt_tokens": g.prompt_tokens, "kv_entries": entries,
-            "post_bytes": sum(q.nbytes(ch) for q in posts) if ch != "none" else 0,
+            "post_bytes": 0 if silent else sum(q.nbytes(ch) for q in posts),
             "code": code[:900]})
     if stream is not None:
         stream.close()

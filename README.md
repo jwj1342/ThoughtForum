@@ -154,7 +154,7 @@ python -m forum.run --backend api --model qwen3-8b \
 
 ```bash
 bash experiments/smoke.sh                              # 本地：用真模型把每个入口都简短跑一遍
-sbatch --account=<你的账户> --array=0-20 experiments/offline.sh   # 有 Slurm 的集群上：离线测量
+sbatch --account=<你的账户> --array=0-23 experiments/offline.sh   # 有 Slurm 的集群上：离线测量
 ```
 
 个人的设置（模型路径等）写在 `experiments/local.sh` 里，这个文件不会入库。在 Alliance（Compute Canada）的集群上，脚本会自动改用模块系统和 wheelhouse。

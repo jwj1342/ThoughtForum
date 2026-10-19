@@ -150,8 +150,9 @@ class TestSecretBench(unittest.TestCase):
                 return summary, [json.loads(line) for line in f]
 
     def test_measure_on_the_mock(self):
-        summary, rows = self._measure("--n", "3", "--channel", "none,text,artifact,session,latent,stream", "--transplant")
-        self.assertEqual(len(summary), 2 + 3 * 4 + 2)   # none, artifact; 4 channels per speech; 2 transplants
+        summary, rows = self._measure("--n", "3", "--channel", "none,full_spec,text,artifact,session,latent,stream",
+                                      "--transplant")
+        self.assertEqual(len(summary), 3 + 3 * 4 + 2)   # none, full_spec, artifact; 4 channels per speech; 2 transplants
         self.assertEqual(len(rows), len(summary) * 3 * len(CONSUMERS))
         self.assertIsNotNone(summary[("lie", "text", False)]["said"])
         self.assertIsNotNone(summary[("honest", "stream", True)]["other"])
