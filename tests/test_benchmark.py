@@ -128,6 +128,7 @@ class TestSecretBench(unittest.TestCase):
             self.assertIn(true["tag"], ctx[1]["content"] + ctx[2]["content"])   # the author always knows its format
             _, answer = S.question(p, d, "m")
             self.assertTrue(answer.startswith(true["tag"] + true["delim"]))
+            self.assertNotIn(answer, "".join(m["content"] for m in ctx))   # derived from the format, not copied
         p8 = S.project_of("Secret8_0_2")
         self.assertEqual((len(p8.meta["formats"]["encode"]["tag"]), p8.pid), (8, "Secret8_0_2"))
         self.assertGreater(p8.meta["bits"]["encode"], p.meta["bits"]["encode"])

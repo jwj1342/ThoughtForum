@@ -89,8 +89,9 @@ def artifact(project, producer: str, result: str = "PASS (1/1)") -> str:
 
 
 def question(project, producer: str, msg: str):
-    """(question, true answer): what the producer returns for the first sample."""
-    v = project.meta["samples"][0]
+    """(question, true answer): what the producer returns for the second sample. The first is the
+    docstring example, which is in the author's context: its answer could be copied, not derived."""
+    v = project.meta["samples"][1]
     args = ", ".join(repr(v[f]) for f in project.meta["fields"])
     answer = write(producer, project.meta["formats"][producer], v)
     return QUESTION.format(msg=msg, cls=project.class_name, name=producer, args=args), answer
