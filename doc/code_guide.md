@@ -38,7 +38,7 @@ flowchart BT
   - `ChunkMeanWriter` 是旧的池化基线；
   - `WriteHead` 是查询向量加一个可训练的映射，训练只作消融。
 - `read_adapter.py`：读取侧可训练的映射（E1a 消融）。
-- `kv_posts.py`：KV 帖子，是和 LatentMAS、KVComm 同一类的方法。`KVStream` 是论坛的共享潜在流：每条帖子是作者的会话，接在流里已有的所有帖子后面编码；读者在它选中的那几段之后生成（`--channel stream`）。其余是离线测量用的：帖子就是作者写完汇报时手里的 KV cache，可以整份给，也可以每层每个头只留 B 条：`snap` 留作者汇报最关注的位置，`recent` 留最后 B 条。读者的提示接在这份 cache 之后生成。
+- `kv_posts.py`：KV 帖子，是和 LatentMAS、KVComm 同一类的方法。`KVStream` 是论坛的共享潜在流：每条帖子是作者的会话，接在流里已有的所有帖子后面编码；读者在它选中的那几段之后生成，前面总带着流最前面的 4 个位置（attention sink，没有它们非开头的段几乎读不出，见 R19）（`--channel stream`）。其余是离线测量用的：帖子就是作者写完汇报时手里的 KV cache，可以整份给，也可以每层每个头只留 B 条：`snap` 留作者汇报最关注的位置，`recent` 留最后 B 条。读者的提示接在这份 cache 之后生成。
 
 ## benchmark/：任务与评测
 
