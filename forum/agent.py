@@ -180,7 +180,10 @@ class Agent:
                       cfg.max_new_tokens)
         code = normalize_method(g.text, st.name)
         wrote = code is not None and c.ws.try_set(st.name, code, self.name)
-        if wrote:
+        bad = c.ws.forbidden_calls(st.name, code) if wrote else []
+        if bad:   # it would pass the visible test through teammates' code and fail in isolation
+            vis = TestResult(total=1, failures=1, first_error=P.not_callable(st.name, bad))
+        elif wrote:
             vis = run(c.project, c.ws.assemble(), st.visible_test)
         else:
             vis = TestResult(first_error=f"no valid definition of `{st.name}` was found in the reply")

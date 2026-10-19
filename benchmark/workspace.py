@@ -103,3 +103,14 @@ class Workspace:
         if name in self.code:
             mix[name] = self.code[name]
         return self._render(mix)
+
+    def forbidden_calls(self, name: str, code: str) -> list[str]:
+        """The other methods of the class that `code` (for `name`) calls although `Subtask.calls` does
+        not list them. Such code fails its isolated test whatever its author knows; the harness says so
+        instead of letting it pass the visible test through teammates' code."""
+        st = self.p.subtask(name)
+        if st.calls is None:
+            return []
+        called = {n.func.attr for n in ast.walk(ast.parse(code)) if isinstance(n, ast.Call)
+                  and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id == "self"}
+        return sorted(called & set(self.p.names) - set(st.calls) - {name})

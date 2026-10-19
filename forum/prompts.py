@@ -38,6 +38,11 @@ Visible test result: {result}
 
 """
 
+
+def not_callable(name: str, calls: list[str]) -> str:
+    """The visible test result of code that calls methods it may not call."""
+    return f"`{name}` calls {', '.join(f'`{c}`' for c in calls)}, which it may not call; it has to do that work itself."
+
 OWN = """Your own earlier code for `{name}`:
 ```python
 {code}

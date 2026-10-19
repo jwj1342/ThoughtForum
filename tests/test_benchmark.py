@@ -45,6 +45,7 @@ class TestCode(unittest.TestCase):
         test = p.subtask("report").hidden_test
         self.assertFalse(run(p, ws.assemble(), test).ok)          # broken dependency drags it down
         self.assertTrue(run(p, ws.isolated("report"), test).ok)   # its own code is fine
+        self.assertEqual(ws.forbidden_calls("report", ws.code["report"]), [])   # without `calls`, it may call any
         self.assertFalse(run(p, ws.isolated("total"), p.subtask("total").hidden_test).ok)
         res = evaluate(p, ws)
         self.assertTrue(res["methods"]["report"]["iso_ok"])
@@ -105,8 +106,13 @@ class TestSecretBench(unittest.TestCase):
                   "migrate": "def migrate(self, s):\n    return self.export(**self.decode(s))\n",
                   "is_record": "def is_record(self, s):\n    try:\n        self.decode(s)\n        return True\n"
                                "    except ValueError:\n        return False\n"}
+        ws = Workspace(p)
         for name, code in cheats.items():
             self.assertFalse(isolated_ok(p, name, f"```python\n{code}```")[0], name)
+            self.assertTrue(ws.forbidden_calls(name, code), name)   # and the harness says why
+        self.assertEqual(ws.forbidden_calls("migrate", cheats["migrate"]), ["decode", "export"])
+        for name in CONSUMERS:   # the references do their own work
+            self.assertEqual(ws.forbidden_calls(name, normalize_method(p.subtask(name).solution, name)), [], name)
 
     def test_reports_and_questions(self):
         p = make_project(7)
@@ -158,6 +164,7 @@ class TestSecretBench(unittest.TestCase):
         self.assertIsNotNone(summary[("honest", "stream", True)]["other"])
         self.assertTrue(all(set(r["answers"]) == {"encode", "export"} for r in rows if r["consumer"] == "migrate"))
         self.assertTrue(all(r["post_bytes"] > 0 for r in rows if r["channel"] == "session"))
+        self.assertTrue(all(isinstance(r["delegated"], list) for r in rows))
 
     def test_measure_load(self):
         from benchmark import measure

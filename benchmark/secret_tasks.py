@@ -111,12 +111,12 @@ def forum_block(kind: str, posts) -> str:
                            latent=kind in ("latent", "kv", "stream"))
 
 
-def use_item(project, name: str, block: str, full_spec: bool = False):
+def use_item(project, name: str, block: str, full_spec: bool = False, feedback: str = ""):
     """(prompt, reference reply, system message) for implementing consumer `name` with `block`;
     `full_spec` shows every docstring, formats included (the upper bound)."""
     st = project.subtask(name)
     spec = project.skeleton if full_spec else private_skeleton(project.skeleton, {name})
     prompt = P.IMPLEMENT.format(spec=spec, forum=block, name=name,
-                                cls=project.class_name, deps=P.deps_note(st), feedback="")
+                                cls=project.class_name, deps=P.deps_note(st), feedback=feedback)
     return prompt, f"```python\n{normalize_method(st.solution, name)}```", P.SYSTEM.format(agent="agent2", n=3)
 

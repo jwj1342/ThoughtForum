@@ -22,7 +22,11 @@ Channels:
 random order. `--transplant` adds, for the honest speech and the latent channels, a control in which
 the reader gets another project's posts instead of its own.
 
-One row per (project, consumer): `ok` (its isolated hidden tests pass), `known` and `said` (the
+A reader whose first answer calls methods the consumer may not call (it would fail in isolation
+whatever it knows) is told so, as the forum's visible test tells an author, and answers once more.
+
+One row per (project, consumer): `ok` (its isolated hidden tests pass), `delegated` (the methods its
+first answer called but may not), `known` and `said` (the
 share of its producers whose true tag / falsely stated tag appears in its code), `other` (under
 transplant, the share of the other project's tags), the answers to the producer questions, and
 cost: prompt tokens, KV entries the reader attends to, and post bytes. analysis/stats.py turns the
@@ -38,6 +42,7 @@ import random
 from collections import defaultdict
 
 from benchmark.evaluate import isolated_ok
+from benchmark.workspace import Workspace
 from benchmark.secret_tasks import SPEECH, artifact, forum_block, producer_context, question, report, stated, use_item
 from benchmark.secretbench import CONSUMERS, PRODUCERS, make_project
 from forum import prompts as P
@@ -148,19 +153,27 @@ def run_project(backend, i, projects, sp, ch, transplant, a, writers, rng):
         silent = ch in ("none", "full_spec")
         chat, block, entries = reader(backend, "none" if silent else ch, [] if silent else posts, stream,
                                       qualified=bool(a.load))
-        prompt, _, system = use_item(p, name, block, full_spec=ch == "full_spec")
-        g = chat([{"role": "system", "content": system}, {"role": "user", "content": prompt}], a.max_new_tokens,
-                 purpose="implement", meta={"subtask": p.subtask(name), "agent": "reader", "attempt": 0})
-        ok, code = isolated_ok(p, name, g.text)
+        fb = ""
+        for attempt in (0, 1):   # once more only if the first attempt calls methods it may not call
+            prompt, _, system = use_item(p, name, block, full_spec=ch == "full_spec", feedback=fb)
+            g = chat([{"role": "system", "content": system}, {"role": "user", "content": prompt}], a.max_new_tokens,
+                     purpose="implement", meta={"subtask": p.subtask(name), "agent": "reader", "attempt": attempt})
+            ok, code = isolated_ok(p, name, g.text)
+            if attempt == 0:
+                tokens = g.prompt_tokens
+                delegated = Workspace(p).forbidden_calls(name, code) if code else []
+                if not delegated:
+                    break
+                fb = P.FEEDBACK.format(code=code, result=P.not_callable(name, delegated))
         code = code or g.text
         rows.append({
             "project": p.pid, "consumer": name, "speech": sp, "channel": ch, "transplant": transplant,
-            "load": a.load, "seed": a.seed, "ok": bool(ok),
+            "load": a.load, "seed": a.seed, "ok": bool(ok), "delegated": delegated,
             "known": share(code, tags(p, deps, lambda pr, d: pr.meta["formats"][d])),
             "said": share(code, tags(p, deps, lambda pr, d: stated(pr, d, sp))) if sp == "lie" else None,
             "other": share(code, tags(src, deps, lambda pr, d: pr.meta["formats"][d])) if transplant else None,
             "answers": {d: answers[d] for d in deps},
-            "prompt_tokens": g.prompt_tokens, "kv_entries": entries,
+            "prompt_tokens": tokens, "kv_entries": entries,
             "post_bytes": 0 if silent else sum(q.nbytes(ch) for q in posts),
             "code": code[:900]})
     if stream is not None:
@@ -177,6 +190,7 @@ def summarize(rows) -> list[dict]:
     for (sp, ch, tr), rs in groups.items():
         vals = lambda k: [r[k] for r in rs if r[k] is not None]
         out.append({"speech": sp, "channel": ch, "transplant": tr, "n": len(rs), "pass": mean([r["ok"] for r in rs]),
+                    "delegated": mean([bool(r["delegated"]) for r in rs]),
                     "known": mean(vals("known")), "said": mean(vals("said")), "other": mean(vals("other")),
                     "answer": mean([a["exact"] for r in rs for a in r["answers"].values()]),
                     "prompt_tokens": mean(vals("prompt_tokens")), "kv_entries": mean(vals("kv_entries")),
@@ -185,7 +199,7 @@ def summarize(rows) -> list[dict]:
 
 
 def table(summary) -> str:
-    cols = ["speech", "channel", "transplant", "n", "pass", "known", "said", "other", "answer", "prompt_tokens",
+    cols = ["speech", "channel", "transplant", "n", "pass", "delegated", "known", "said", "other", "answer", "prompt_tokens",
             "kv_entries", "post_kb"]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     lines += ["| " + " | ".join("–" if s[c] is None else str(s[c]) for c in cols) + " |" for s in summary]
