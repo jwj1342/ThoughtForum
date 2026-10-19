@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from benchmark import secret_tasks as S
+from benchmark.secretbench import CONSUMERS
 from benchmark.tasks import parse_task_spec, toy_projects
 from forum.agent import force_done, parse_status, pick_option
 from forum.config import RunConfig
@@ -87,20 +88,31 @@ class TestPipeline(unittest.TestCase):
         rec, _, _ = run(p, RunConfig(spec="private", rounds=4).validate(), MockBackend(p_correct=1.0), seed=5)
         self.assertEqual(rec["method_pass"], 1.0)
 
-    def test_consumers_read_the_producer_post(self):
+    def assert_reads_posted_deps(self, events):
+        """Every consumer attempt reads the latest post on each of its producers, unless it wrote that post."""
+        author, checked = {}, 0
+        for e in events:
+            if e["type"] != "work":
+                continue
+            if e["method"] in CONSUMERS:
+                expected = {d for d in CONSUMERS[e["method"]] if author.get(d, e["agent"]) != e["agent"]}
+                self.assertLessEqual(expected, {r["anchor"] for r in e["read"]}, e["method"])
+                checked += bool(expected)
+            author[e["method"]] = e["agent"]
+        self.assertGreater(checked, 0)
+
+    def test_consumers_read_the_producer_posts(self):
         p = parse_task_spec("secret:1", "", 3, None)[0]
         cfg = RunConfig(channel="text", spec="private", rounds=4).validate()
         _, events, _ = run(p, cfg, MockBackend(p_correct=1.0), seed=6)
-        work = [e for e in events if e["type"] == "work" and e["method"] != "encode"]
-        self.assertTrue(work and all(any(r["anchor"] == "encode" for r in e["read"]) for e in work))
+        self.assert_reads_posted_deps(events)
 
     def test_stream_channel(self):
         p = parse_task_spec("secret:1", "", 3, None)[0]
         for control in ("none", "zero"):
             cfg = RunConfig(channel="stream", spec="private", rounds=4, control=control).validate()
             rec, events, probes = run(p, cfg, MockBackend(p_correct=1.0), seed=6)
-            work = [e for e in events if e["type"] == "work" and e["method"] != "encode"]
-            self.assertTrue(work and all(any(r["anchor"] == "encode" for r in e["read"]) for e in work))
+            self.assert_reads_posted_deps(events)
             self.assertEqual(rec.get("calls_with_latents", 0) > 0, control == "none")   # zero: no segments
             self.assertEqual(probes, [])
         with self.assertRaises(ValueError):
@@ -118,8 +130,8 @@ class TestPipeline(unittest.TestCase):
         for memory in (False, True):
             b = RecordingMock("implement", p_correct=1.0)
             cfg = RunConfig(channel="none", spec="private", memory=memory, n_agents=1, rounds=4).validate()
-            run(p, cfg, b)
-            consumer = [t for _, t in b.seen if "implement the method `encode`" not in t]
+            run(p, cfg, b)   # one agent, dependencies first: it wrote `encode` before any reader of it
+            consumer = [t for meta, t in b.seen if meta["subtask"].name in ("decode", "is_record", "get_field")]
             self.assertTrue(consumer)
             self.assertEqual(all("Your own earlier code for `encode`" in t for t in consumer), memory)
         cfg = RunConfig(channel="text", source="artifact", spec="private", n_agents=1, rounds=1).validate()
@@ -135,12 +147,13 @@ class TestPipeline(unittest.TestCase):
         _, events, _ = run(p, cfg, b)
         prompts = [t for _, t in b.seen]
         self.assertEqual(next(t for t in prompts if "implement the method `encode`" in t),
-                         S.producer_context(p, "x")[1]["content"])
+                         S.producer_context(p, "encode", "x")[1]["content"])
         post = next(e for e in events if e["type"] == "work" and e["method"] == "encode")
         work = [e for e in events if e["type"] == "work"]
-        consumer = next(t for e, t in zip(work, prompts) if e["method"] == "decode" and e["agent"] != post["agent"])
-        prompt, _, _ = S.use_item(p, "decode", S.forum_block("text", post["report"]).replace(
-            "[post 0] from agent1", f"[post {post['pid']}] from {post['agent']}"))
+        consumer = next(t for e, t in zip(work, prompts) if e["method"] == "decode" and e["agent"] != post["agent"]
+                        and e["pid"] > post["pid"])
+        head = f"[post {post['pid']}] from {post['agent']} on `encode`"
+        prompt, _, _ = S.use_item(p, "decode", S.forum_block("text", [(head, post["report"])]))
         self.assertEqual(prompt, consumer)
 
     def test_mislead_prompts_only_saboteurs(self):

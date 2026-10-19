@@ -11,10 +11,9 @@ Entries keep their original positions; the reader's tokens are placed after the 
 position, so to the reader the post looks like an earlier session with most entries evicted.
 This is the KV-sharing family of LatentMAS / KVComm / C2C, here between untrusted authors.
 
-Several posts are written independently and never attended to each other. Laid side by side
-(`concat`) the reader reads their content but attributes it to the wrong post. `assemble` adds a
-short text caption after each post (who wrote it, on what) that the reader prefills: the caption
-attends to the post just before it, which binds the post to its explicit provenance.
+Posts written independently never attended to each other. Laid end to end (`concat`), the reader
+reads their content but attributes it to the wrong post (R17). In `KVStream` each post is written on
+top of the posts before it, and posts compose.
 """
 from __future__ import annotations
 
@@ -36,7 +35,6 @@ class KVPost:
     end: int                # the author's sequence length; the reader's first position
     k: int                  # entries kept per head (S)
     nbytes: int = 0
-    shared: int = 0         # leading positions every author has in common (the system turn)
 
 
 def _layer_kv(cache, i):
@@ -72,9 +70,7 @@ class KVWriter:
             layers.append((k.cpu(), v.cpu()))
         s = layers[0][0].shape[2]
         nbytes = sum(t.numel() * t.element_size() for kv in layers for t in kv)
-        shared = b.count_tokens(b.render(messages[:1], add_generation_prompt=False)) \
-            if messages and messages[0]["role"] == "system" else 0
-        return KVPost(layers, n, s, nbytes, shared)
+        return KVPost(layers, n, s, nbytes)
 
     def _fixed(self, n, device):
         rest = self.budget - SINKS
@@ -107,27 +103,19 @@ def _rotate_half(x):
 
 
 @torch.no_grad()
-def concat(backend, posts, layout: str = "sequential", dedup: bool = False) -> KVPost:
-    """One prefix from several posts written independently.
-    - sequential: one after another; each post's keys are rotated forward by the positions before it
-      (RoPE rotations compose, and attention only sees relative positions), so the reader sees
-      consecutive earlier sessions;
-    - parallel: every post keeps the positions it was written at, as in parallel context encoding (APE).
-    `dedup` keeps the shared system turn once, from the first post (whole posts only)."""
+def concat(backend, posts) -> KVPost:
+    """One prefix from several posts written independently, one after another: each post's keys are
+    rotated forward by the positions before it (RoPE rotations compose, and attention only sees
+    relative positions), so the reader sees consecutive earlier sessions."""
     if len(posts) == 1:
         return posts[0]
-    assert layout in ("sequential", "parallel") and (not dedup or all(p.k == p.end for p in posts))
-    cut = min(p.shared for p in posts) if dedup else 0
-    dev, off, end, parts = backend.device, 0, 0, []
-    for t, p in enumerate(posts):
-        c = cut if t else 0
-        delta = off - c if layout == "sequential" else 0
-        parts.append([(_shift(backend, k[:, :, c:], delta), v[:, :, c:].to(dev)) for k, v in p.layers])
-        off, end = delta + p.end, max(end, delta + p.end)
+    dev, off, parts = backend.device, 0, []
+    for p in posts:
+        parts.append([(_shift(backend, k, off), v.to(dev)) for k, v in p.layers])
+        off += p.end
     layers = [(torch.cat([q[i][0] for q in parts], 2), torch.cat([q[i][1] for q in parts], 2))
               for i in range(len(parts[0]))]
-    return KVPost(layers, end, layers[0][0].shape[2], sum(t.numel() * t.element_size() for kv in layers for t in kv),
-                  posts[0].shared)
+    return KVPost(layers, off, layers[0][0].shape[2], sum(p.nbytes for p in posts))
 
 
 def _shift(backend, k, delta: int):
@@ -137,26 +125,6 @@ def _shift(backend, k, delta: int):
     cos, sin = cos[:, None], sin[:, None]                               # [1, 1, 1, head_dim]
     k = k.to(dev).float()
     return (k * cos + _rotate_half(k) * sin).to(backend.model.dtype)
-
-
-@torch.no_grad()
-def assemble(backend, posts, captions) -> KVPost:
-    """Posts end to end, each followed by its caption, which the reader prefills on top of what is before it."""
-    b, dev = backend, backend.device
-    cache, s, pos = DynamicCache(), 0, 0
-    for p, cap in zip(posts, captions):
-        for i, (k, v) in enumerate(p.layers):
-            cache.update(_shift(b, k, pos), v.to(dev), i)
-        s, pos = s + p.k, pos + p.end
-        ids = b.tok(cap, add_special_tokens=False, return_tensors="pt").input_ids.to(dev)
-        m = ids.shape[1]
-        b.model.model(input_ids=ids, past_key_values=cache, use_cache=True,
-                      position_ids=torch.arange(pos, pos + m, device=dev)[None],
-                      cache_position=torch.arange(s, s + m, device=dev),
-                      attention_mask=torch.ones(1, s + m, dtype=torch.long, device=dev))
-        s, pos = s + m, pos + m
-    layers = [_layer_kv(cache, i) for i in range(len(posts[0].layers))]
-    return KVPost(layers, pos, s, sum(p.nbytes for p in posts), posts[0].shared)
 
 
 class KVStream:

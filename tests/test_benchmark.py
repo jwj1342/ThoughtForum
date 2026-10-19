@@ -6,7 +6,7 @@ import unittest
 from benchmark import secret_tasks as S
 from benchmark.evaluate import evaluate, isolated_ok, run
 from benchmark.sandbox import run_tests
-from benchmark.secretbench import make_project
+from benchmark.secretbench import CONSUMERS, PRODUCERS, make_project
 from benchmark.tasks import _first_test_only, load_classeval, parse_task_spec, private_skeleton, toy_projects
 from benchmark.workspace import Workspace, normalize_method
 
@@ -78,83 +78,87 @@ class TestCode(unittest.TestCase):
 
 
 class TestSecretBench(unittest.TestCase):
-    def test_references_pass_and_format_stays_private(self):
-        ps = parse_task_spec("secret:6", "", 3, None)
-        self.assertEqual(len({p.meta["secret"]["tag"] for p in ps}), 6)
-        for p in ps:
+    def test_references_pass_and_formats_stay_private(self):
+        ps = parse_task_spec("secret:40", "", 3, None)
+        self.assertEqual(len({p.class_name for p in ps}), 40)
+        for p in ps[:12]:
             ref = Workspace(p).reference()
-            sec = p.meta["secret"]
+            tags = [f["tag"] for f in p.meta["formats"].values()]
             for st in p.subtasks:
                 self.assertTrue(run(p, ref, st.hidden_test).ok, (p.pid, st.name))
-                if st.name != "encode":   # neither the consumer's view nor its visible test leaks the format
-                    self.assertNotIn(sec["tag"], private_skeleton(p.skeleton, {st.name}) + st.visible_test)
+                if st.name in CONSUMERS:   # neither a consumer's view nor its visible test leaks a format
+                    view = private_skeleton(p.skeleton, {st.name}) + st.visible_test
+                    self.assertFalse(any(t in view for t in tags), (p.pid, st.name))
 
-    def test_offline_items(self):
-        p = parse_task_spec("secret:1", "", 3, None)[0]
-        for name in S.CONSUMERS:
-            self.assertTrue(isolated_ok(p, name, S.use_item(p, name, "")[1])[0])
-        self.assertFalse(isolated_ok(p, "decode", "def decode(self, s):\n    return {}\n")[0])
-        _, record = S.secret_item(p, "m")
-        self.assertTrue(record.startswith(p.meta["secret"]["tag"] + p.meta["secret"]["delim"]))
-        rows = S.synthetic_rows(range(1000, 1040), 0, random.Random(0))
-        self.assertTrue(5 < sum(r["vague"] for r in rows) < 35)
-        for r in rows:
-            sec = S.project_of(r["project"]).meta["secret"]
-            self.assertEqual(sec["tag"] in r["text"], not r["vague"])
-            self.assertIn(sec["tag"], r["context"][1]["content"])   # the author always knows the format
+    def test_hidden_tests_need_the_formats(self):
+        for p in (make_project(5), make_project(6)):
+            for name, deps in CONSUMERS.items():
+                d = deps[-1]
+                sol = normalize_method(p.subtask(name).solution, name)
+                wrong = sol.replace(repr(p.meta["formats"][d]["delim"]), repr(S.false_format(p, d)["delim"]))
+                self.assertTrue(isolated_ok(p, name, f"```python\n{sol}```")[0], name)
+                self.assertFalse(isolated_ok(p, name, f"```python\n{wrong}```")[0], name)
+
+    def test_reports_and_questions(self):
+        p = make_project(7)
+        for d in PRODUCERS:
+            true, fake = p.meta["formats"][d], S.false_format(p, d)
+            self.assertTrue(all(fake[k] != true[k] for k in ("tag", "delim", "order")))
+            for k in range(3):
+                self.assertIn(true["tag"], S.report(p, d, "honest", k))
+                lie = S.report(p, d, "lie", k)
+                self.assertTrue(fake["tag"] in lie and true["tag"] not in lie)
+                self.assertNotIn(true["tag"], S.report(p, d, "omit", k))
+            ctx = S.producer_context(p, d, "x")
+            self.assertIn(true["tag"], ctx[1]["content"] + ctx[2]["content"])   # the author always knows its format
+            _, answer = S.question(p, d, "m")
+            self.assertTrue(answer.startswith(true["tag"] + true["delim"]))
+        p8 = S.project_of("Secret8_0_2")
+        self.assertEqual((len(p8.meta["formats"]["encode"]["tag"]), p8.pid), (8, "Secret8_0_2"))
+        self.assertGreater(p8.meta["bits"]["encode"], p.meta["bits"]["encode"])
 
     def test_forum_block_kinds(self):
-        self.assertEqual(S.forum_block("none", "x"), "")
-        self.assertIn("x", S.forum_block("text", "x"))
-        self.assertNotIn("x", S.forum_block("latent", "x"))
-        self.assertTrue("x" in S.forum_block("both", "x") and "<<LATENT:0>>" in S.forum_block("both", "x"))
+        from forum import prompts as P
+        posts = [("[post 0] from agent1 on `encode`", "x")]
+        self.assertEqual(S.forum_block("none", posts), "")
+        self.assertIn("x", S.forum_block("session", posts))
+        self.assertTrue("x" not in S.forum_block("latent", posts) and "<<LATENT:0>>" in S.forum_block("latent", posts))
+        self.assertIn(P.KV_NOTE, S.forum_block("stream", posts))
         with self.assertRaises(KeyError):   # an unknown kind must not silently fall back to the text
-            S.forum_block("self_step0", "x")
+            S.forum_block("self_step0", posts)
 
-    def test_speech_variants(self):
-        p = parse_task_spec("secret:1", "", 3, None)[0]
-        true, fake = p.meta["secret"], S.false_secret(p)
-        self.assertTrue(all(fake[k] != true[k] for k in ("tag", "delim", "order")))
-        for tmpl in S.EXPLICIT:
-            honest, lie = S.report(p, "honest", tmpl), S.report(p, "lie", tmpl)
-            self.assertIn(true["tag"], honest)
-            self.assertTrue(fake["tag"] in lie and true["tag"] not in lie)
-        for tmpl in S.VAGUE:
-            self.assertNotIn(true["tag"], S.report(p, "omit", tmpl))
-        p8 = S.project_of("Secret8_0_2")
-        self.assertEqual((len(p8.meta["secret"]["tag"]), p8.pid), (8, "Secret8_0_2"))
-        self.assertGreater(p8.meta["bits"], p.meta["bits"])
+    def _measure(self, *args):
+        import contextlib
+        import io
+        import json
+        import tempfile
+        from benchmark import measure
+        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+            measure.main(["--backend", "mock", "--out", d, *args])
+            with open(os.path.join(d, "summary.json")) as f:
+                summary = {(r["speech"], r["channel"], r["transplant"]): r for r in json.load(f)["summary"]}
+            with open(os.path.join(d, "rows.jsonl")) as f:
+                return summary, [json.loads(line) for line in f]
 
     def test_measure_on_the_mock(self):
-        import json
-        import tempfile
-        from benchmark import measure
-        import contextlib
-        import io
-        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
-            measure.main(["--backend", "mock", "--n", "2", "--out", d])
-            with open(os.path.join(d, "summary.json")) as f:
-                rows = {(r["speech"], r["channel"], r["transplant"]): r for r in json.load(f)["summary"]}
-        self.assertEqual(len(rows), 2 + 3 * 5 + 1)   # none, artifact; 3 texts, latent, both per speech; one transplant
-        self.assertGreater(rows[("-", "artifact", False)]["post_kb"], 0)
-        self.assertIsNotNone(rows[("lie", "text", False)]["said_in_code"])
-        self.assertIsNotNone(rows[("honest", "latent", True)]["other_in_code"])
+        summary, rows = self._measure("--n", "3", "--channel", "none,text,artifact,session,latent,stream", "--transplant")
+        self.assertEqual(len(summary), 2 + 3 * 4 + 2)   # none, artifact; 4 channels per speech; 2 transplants
+        self.assertEqual(len(rows), len(summary) * 3 * len(CONSUMERS))
+        self.assertIsNotNone(summary[("lie", "text", False)]["said"])
+        self.assertIsNotNone(summary[("honest", "stream", True)]["other"])
+        self.assertTrue(all(set(r["answers"]) == {"encode", "export"} for r in rows if r["consumer"] == "migrate"))
+        self.assertTrue(all(r["post_bytes"] > 0 for r in rows if r["channel"] == "session"))
 
-    def test_measure_load_setting(self):
-        import json
-        import tempfile
+    def test_measure_load(self):
         from benchmark import measure
-        import contextlib
-        import io
-        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
-            measure.main(["--backend", "mock", "--n", "3", "--posts", "3", "--channel", "text,transcript",
-                          "--speech", "lie", "--out", d])
-            with open(os.path.join(d, "rows.jsonl")) as f:
-                rows = [json.loads(line) for line in f]
-        self.assertEqual({r["posts"] for r in rows}, {3})
-        msg, block = measure.present_many("text", ["a", "b"], [make_project(0), make_project(1)])
-        self.assertIn(f"[post 1] from agent2 on `{make_project(1).class_name}.encode`", block)
-        self.assertIn("[assistant]", measure.text_of("transcript", make_project(0), "STATUS: DONE"))
+        from model.backends.mock import MockBackend
+        _, rows = self._measure("--n", "4", "--load", "3", "--channel", "text,stream", "--speech", "lie")
+        self.assertEqual({r["load"] for r in rows}, {3})
+        posts = [measure.Post(make_project(0), "encode", "honest", 0, "session", None),
+                 measure.Post(make_project(1), "export", "honest", 0, "session", None)]
+        _, block, _ = measure.reader(MockBackend(), "session", posts, qualified=True)
+        self.assertIn(f"[post 1] from agent2 on `{make_project(1).class_name}.export`", block)
+        self.assertIn("[assistant]", block)
 
 
 if __name__ == "__main__":

@@ -81,6 +81,7 @@ def run_condition(cfg: RunConfig, backend, projects) -> dict:
     with open(os.path.join(out, "config.json"), "w") as f:
         json.dump(dataclasses.asdict(cfg), f, indent=1)
     writer = writer_for(cfg, backend)
+    backend.reseed(cfg.seed)   # each condition samples from its own seed, so seeds are independent repeats
     bank, records, events, probes = [], [], [], []
     for i, p in enumerate(projects):
         rec, ev, pr = run_project(p, backend, writer, cfg, bank, seed=cfg.seed * 1000 + i)

@@ -62,6 +62,9 @@ class HFBackend(Backend):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def reseed(self, seed: int):
+        torch.manual_seed(seed)
+
     # ---- prompts ----------------------------------------------------------------------
     def count_tokens(self, text: str) -> int:
         return len(self.tok(text, add_special_tokens=False).input_ids)

@@ -24,6 +24,9 @@ class MockBackend(Backend):
         self.p_correct = p_correct
         self.seed = seed
 
+    def reseed(self, seed: int):
+        self.seed = seed
+
     def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
         meta = meta or {}
         n_lat = sum(len(LATENT_RE.findall(m["content"])) for m in messages)

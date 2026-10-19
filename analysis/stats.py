@@ -4,10 +4,10 @@
     python -m analysis.stats measure runs/measure_kv_<id>/*/rows.jsonl --ref "lie/text/-/1"
 
 An item is one consumer method of one project; it passes when its isolated hidden tests pass.
-- forum: SecretBench consumers whose producer `encode` was written by another agent (the ones
-  that measure the channel); with --items all, every method.
-- measure: every (project, consumer) row of benchmark/measure.py, grouped by speech / channel /
-  writer / posts (and "T" for the transplant control).
+- forum: SecretBench consumers none of whose producers was written by the consumer's own author
+  (the ones that measure the channel); with --items all, every method.
+- measure: every (project, consumer, seed) row of benchmark/measure.py, grouped by speech /
+  channel / load (and "T" for the transplant control); seeds are repeated measures of one item.
 
 Items of one project are correlated, so intervals resample projects (cluster bootstrap, 95%).
 Two conditions are compared on the projects they share: the difference of pass rates with a
@@ -25,8 +25,7 @@ import random
 from collections import defaultdict
 
 from analysis.paired import sign_test
-
-CONSUMERS = ("decode", "is_record", "get_field")
+from benchmark.secretbench import CONSUMERS
 
 
 def forum_items(cond_dir: str, which: str = "cross") -> dict:
@@ -35,23 +34,22 @@ def forum_items(cond_dir: str, which: str = "cross") -> dict:
     for line in open(os.path.join(cond_dir, "projects.jsonl")):
         r = json.loads(line)
         methods = r["methods"]
-        producer = methods.get("encode", {}).get("author")
         for m, v in methods.items():
-            if which == "cross" and (m not in CONSUMERS or v.get("author") == producer):
-                continue
+            if which == "cross":
+                if m not in CONSUMERS or v.get("author") in {methods[d].get("author") for d in CONSUMERS[m]}:
+                    continue
             out[(r["project"], m)] = bool(v["iso_ok"])
     return out
 
 
 def measure_items(paths) -> dict:
-    """{condition label: {(project, consumer): passed}} from measure rows.jsonl files."""
+    """{condition label: {(project, consumer, seed): passed}} from measure rows.jsonl files."""
     conds = defaultdict(dict)
     for path in paths:
         for line in open(path):
             r = json.loads(line)
-            label = "/".join([r["speech"], r["channel"], r["writer"], str(r.get("posts", 1))]) + ("/T" if r["transplant"] else "")
-            for name, ok in r["ok"].items():
-                conds[label][(r["project"], name)] = bool(ok)
+            label = f"{r['speech']}/{r['channel']}/load{r['load']}" + ("/T" if r["transplant"] else "")
+            conds[label][(r["project"], r["consumer"], r["seed"])] = bool(r["ok"])
     return dict(conds)
 
 

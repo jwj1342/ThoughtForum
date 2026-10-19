@@ -167,13 +167,6 @@ class TestHFBackend(unittest.TestCase):
         k, v = _layer_kv(out.past_key_values, 1)
         self.assertTrue(torch.allclose(two.layers[1][0][:, :, n:].cpu(), k.cpu(), atol=1e-4))
         self.assertTrue(torch.allclose(two.layers[1][1][:, :, n:].cpu(), v.cpu(), atol=1e-4))
-        c = post.shared
-        self.assertGreater(c, 0)
-        par = concat(self.b, [post, post], "parallel", dedup=True)
-        self.assertEqual((par.k, par.end), (2 * n - c, n))
-        self.assertTrue(torch.equal(par.layers[1][0][:, :, n:].cpu(), post.layers[1][0][:, :, c:]))
-        seq = concat(self.b, [post, post], dedup=True)
-        self.assertEqual((seq.k, seq.end), (2 * n - c, 2 * n - c))
 
     def test_kv_stream(self):
         from model.kv_posts import _layer_kv
@@ -195,22 +188,6 @@ class TestHFBackend(unittest.TestCase):
         self.assertTrue(torch.equal(only_b.layers[1][1], both.layers[1][1][:, :, a.k:]))
         g = s.chat(only_b, [{"role": "user", "content": "Go on."}], max_new_tokens=3)
         self.assertGreaterEqual(g.gen_tokens, 0)
-
-    def test_kv_assemble_captions(self):
-        from model.kv_posts import KVWriter, _layer_kv, assemble
-        report, cap = "STATUS: DONE\nencode works", "[post 0] from agent1 on `encode`\n"
-        post = KVWriter(self.b).write(self.msgs, report)
-        both = assemble(self.b, [post, post], [cap, cap])
-        m = self.b.count_tokens(cap)
-        self.assertEqual((both.k, both.end), (2 * (post.end + m),) * 2)
-        # one post and its caption: the same as encoding the author's text and the caption together
-        author = self.b.render(self.msgs + [{"role": "assistant", "content": report}], add_generation_prompt=False)
-        ids = torch.cat([self.b.tok(t, add_special_tokens=False, return_tensors="pt").input_ids for t in (author, cap)],
-                        1).to(self.b.device)
-        k, v = _layer_kv(self.b.model.model(input_ids=ids, use_cache=True).past_key_values, 1)
-        one = assemble(self.b, [post], [cap])
-        self.assertEqual(one.k, ids.shape[1])
-        self.assertTrue(torch.allclose(one.layers[1][1].cpu(), v.cpu(), atol=1e-4))
 
     def test_only_the_head_gets_gradients(self):
         from model.hf_writers import GistWriter, random_head

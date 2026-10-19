@@ -48,3 +48,6 @@ class Backend:
 
     def count_tokens(self, text: str) -> int:
         return max(1, len(text) // 4)
+
+    def reseed(self, seed: int):
+        """Make the sampling of the calls that follow reproducible under `seed`."""
