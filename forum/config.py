@@ -25,7 +25,9 @@ CHOICES = {
     # report: latent of the author's own message. artifact: latent of the code plus CI log,
     # computed by the trusted harness, so the author cannot shape its content. With the text
     # channel, artifact posts the code and CI log as text (the explicit "read my code" baseline).
-    "source": ("report", "artifact"),
+    # session (text only): the author's whole session as text, what a stream post holds, minus the
+    # forum posts it read (those are posts of their own).
+    "source": ("report", "artifact", "session"),
     # content controls applied to every post a reader receives: another post's payload, or an empty one
     "control": ("none", "shuffle", "zero"),
     # always: the harness rewrites the STATUS line of overclaiming agents to DONE (crude; the body may
@@ -94,6 +96,8 @@ class RunConfig:
             raise ValueError("source=artifact needs a channel")
         if self.backend == "api" and self.channel in ("latent", "stream"):
             raise ValueError("latent posts need a local model: use --backend hf (the api backend is text only)")
+        if self.source == "session" and self.channel != "text":
+            raise ValueError("source=session is the text version of a stream post: channel=text")
         if self.channel == "stream" and self.source != "report":
             raise ValueError("stream posts are the author's own session: source=report")
         return self

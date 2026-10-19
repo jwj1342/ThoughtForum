@@ -96,6 +96,11 @@ def deps_note(deps) -> str:
             + ", ".join(f"`{d}`" for d in deps) + ".") if deps else ""
 
 
+def transcript(messages) -> str:
+    """A session as plain text, turn by turn."""
+    return "\n\n".join(f"[{m['role']}]\n{m['content']}" for m in messages)
+
+
 def post_head(pid: int, author: str, anchor: str | None = None) -> str:
     return f"[post {pid}] from {author}" + (f" on `{anchor}`" if anchor else "")
 

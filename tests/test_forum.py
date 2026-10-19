@@ -105,6 +105,13 @@ class TestPipeline(unittest.TestCase):
             self.assertEqual(probes, [])
         with self.assertRaises(ValueError):
             RunConfig(channel="stream", source="artifact").validate()
+        cfg = RunConfig(channel="text", source="session", spec="private", rounds=4).validate()
+        b = RecordingMock("implement", p_correct=1.0)
+        _, events, _ = run(p, cfg, b, seed=6)
+        self.assertTrue(all(e["report"].startswith("[system]") for e in events if e["type"] == "work"))
+        read = [t for _, t in b.seen if "[assistant]" in t]
+        self.assertTrue(read)   # consumers got whole sessions, each without the posts its author had read
+        self.assertTrue(all(t.count("Messages from teammates") == 1 for t in read))
 
     def test_memory_and_text_artifact(self):
         p = parse_task_spec("secret:1", "", 3, None)[0]

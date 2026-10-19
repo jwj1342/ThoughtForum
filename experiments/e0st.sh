@@ -4,7 +4,8 @@
 # segments of the posts they get. Same setting as E0s3 / E0s4 (40 projects, 3 agents, private spec, memory).
 #   task 0: honest authors: stream, stream with shuffled segments, text report
 #   task 1: every author misstates its method's format (mislead): stream, text report
-# Run from the repo root:  sbatch --array=0-1 experiments/e0st.sh
+#   task 2: the text version of a stream post (source=session: the author's whole session as text), honest and mislead
+# Run from the repo root:  sbatch --array=0-2 experiments/e0st.sh
 #SBATCH --job-name=lf-e0st
 #SBATCH --time=05:00:00
 #SBATCH --gpus=h100_3g.40gb:1
@@ -24,4 +25,7 @@ case "$TASK_ID" in
   1) M=(--overclaim-frac 1.0 --overclaim-mode mislead)
      python -m forum.run "${COMMON[@]}" "${M[@]}" --channel stream --out "$OUT/mislead"
      python -m forum.run "${COMMON[@]}" "${M[@]}" --channel text --out "$OUT/mislead" ;;
+  2) python -m forum.run "${COMMON[@]}" --channel text --source session --out "$OUT/honest"
+     python -m forum.run "${COMMON[@]}" --overclaim-frac 1.0 --overclaim-mode mislead --channel text --source session \
+         --out "$OUT/mislead" ;;
 esac

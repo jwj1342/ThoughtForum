@@ -147,7 +147,7 @@ class Agent:
         msgs, reply, code, wrote, vis = self._implement(st, block, latents)
         hid, iso = hidden(c.project, c.ws, st.name)   # for analysis only; agents never see these
         rep_msgs, text, claimed, falsified = self._report(st, msgs, reply, latents, vis)
-        text, lat, src_msgs = self._payload(st, rep_msgs, text, claimed, latents, vis)
+        text, lat, src_msgs = self._payload(st, rep_msgs, text, claimed, latents, vis, block)
         post = c.forum.write(Post(0, c.project.pid, self.name, rnd, st.name, claimed, text, lat,
                                   version=c.ws.version[st.name], verified=vis.to_dict(),
                                   truth={**hid.to_dict(), "iso_ok": iso.ok}, falsified=falsified,
@@ -209,7 +209,7 @@ class Agent:
                 text, claimed = force_done(text), "DONE"
         return rep_msgs, text, claimed, falsified
 
-    def _payload(self, st, rep_msgs, text, claimed, latents, vis):
+    def _payload(self, st, rep_msgs, text, claimed, latents, vis, block=""):
         """What the post carries. Returns (text, latent or None, the context a latent was read from)."""
         c, cfg = self.ctx, self.ctx.cfg
         art = P.ARTIFACT.format(name=st.name, cls=c.project.class_name, code=c.ws.code.get(st.name, "(no code)"),
@@ -217,6 +217,9 @@ class Agent:
         if cfg.channel == "text":
             if cfg.source == "artifact":   # post the committed code and CI log, keep only the STATUS line
                 text = f"STATUS: {claimed}\n" + art
+            elif cfg.source == "session":  # the whole session as text, without the posts the author read
+                own = [dict(m, content=m["content"].replace(block, "")) if block else m for m in rep_msgs]
+                text = P.transcript(own + [{"role": "assistant", "content": text}])
             c.stats["payload_slots"] += c.backend.count_tokens(text)
         if cfg.channel == "stream":   # the author's session, encoded on top of the forum's stream
             lat = c.stream.append(rep_msgs, text, meta={"anchor": st.name, "visible_ok": vis.ok})

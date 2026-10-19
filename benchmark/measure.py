@@ -62,11 +62,6 @@ def make_post(writer, project, speech: str, tmpl_i: int):
     return text, (writer.write(ctx[:-1], text) if writer is not None else None)
 
 
-def transcript(messages) -> str:
-    """The author's session as plain text, turn by turn."""
-    return "\n\n".join(f"[{m['role']}]\n{m['content']}" for m in messages)
-
-
 def text_of(channel, project, report_text) -> str:
     """The text a text-channel post carries."""
     if channel == "artifact":
@@ -74,7 +69,7 @@ def text_of(channel, project, report_text) -> str:
     if channel == "text_artifact":
         return report_text + "\n\n" + artifact(project, status=False)
     if channel == "transcript":
-        return transcript(producer_context(project, report_text))
+        return P.transcript(producer_context(project, report_text))
     return report_text
 
 
