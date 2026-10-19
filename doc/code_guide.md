@@ -38,6 +38,7 @@ flowchart BT
   - `ChunkMeanWriter` 是旧的池化基线；
   - `WriteHead` 是查询向量加一个可训练的映射，训练只作消融。
 - `read_adapter.py`：读取侧可训练的映射（E1a 消融）。
+- `kv_posts.py`：KV 帖子，是和 LatentMAS、KVComm 同一类的对照。帖子就是作者写完汇报时手里的 KV cache，可以整份给，也可以每层每个头只留 B 条：`snap` 留作者汇报最关注的位置，`recent` 留最后 B 条。读者的提示接在这份 cache 之后生成。
 
 ## benchmark/：任务与评测
 
@@ -134,6 +135,7 @@ flowchart BT
 | `e1s.sh`、`e1s2.sh` | SecretBench 离线评测与训练诊断（R13） |
 | `e0s3.sh`、`e0s4.sh` | 本方法放进 SecretBench 论坛：作者诚实 / 作者把格式说错 |
 | `measure.sh` | 离线 SecretBench 测量（主线）：如实 / 省略 / 说错 × 文字 / 潜在帖子 / 两者都给，以及容量曲线 |
+| `measure_kv.sh` | 离线测量 KV 帖子（R16、R17）：整份、按汇报注意力选 B 条、最后 B 条、均匀 B 条；对照文字、贴代码、会话原文；容量；同时收到 M 条帖子的负载 |
 | `probe_cpu.sh` | 只用 CPU 跑线性探针 |
 
 ## 测试

@@ -92,13 +92,22 @@ def synthetic_rows(ids, seed: int, rng: random.Random) -> list[dict]:
     return rows
 
 
+def artifact(project, result: str = "PASS (1/1)", status: bool = True) -> str:
+    """The producer's committed code and CI result, as a text post with source=artifact carries it."""
+    code = normalize_method(project.subtask("encode").solution, "encode")
+    art = P.ARTIFACT.format(name="encode", cls=project.class_name, code=code, result=result)
+    return "STATUS: DONE\n" + art if status else art
+
+
 def forum_block(kind: str, text: str = "") -> str:
-    """The forum section of a consumer's prompt, formatted as Forum.render does for one post."""
+    """The forum section of a consumer's prompt, formatted as Forum.render does for one post.
+    `kv`: the post is the author's KV cache, placed before the prompt, so the body only points to it."""
     if kind == "none":
         return ""
     words = text.strip() or "(empty)"
-    body = {"text": words, "latent": LATENT_MARK.format(i=0), "both": words + "\n" + LATENT_MARK.format(i=0)}[kind]
-    return P.forum_section([(P.post_head(0, "agent1", "encode"), body)], latent=kind in ("latent", "both"))
+    body = {"text": words, "latent": LATENT_MARK.format(i=0), "both": words + "\n" + LATENT_MARK.format(i=0),
+            "kv": P.KV_NOTE}[kind]
+    return P.forum_section([(P.post_head(0, "agent1", "encode"), body)], latent=kind in ("latent", "both", "kv"))
 
 
 def secret_item(project, msg: str):

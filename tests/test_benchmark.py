@@ -6,6 +6,7 @@ import unittest
 from benchmark import secret_tasks as S
 from benchmark.evaluate import evaluate, isolated_ok, run
 from benchmark.sandbox import run_tests
+from benchmark.secretbench import make_project
 from benchmark.tasks import _first_test_only, load_classeval, parse_task_spec, private_skeleton, toy_projects
 from benchmark.workspace import Workspace, normalize_method
 
@@ -134,9 +135,26 @@ class TestSecretBench(unittest.TestCase):
             measure.main(["--backend", "mock", "--n", "2", "--out", d])
             with open(os.path.join(d, "summary.json")) as f:
                 rows = {(r["speech"], r["channel"], r["transplant"]): r for r in json.load(f)["summary"]}
-        self.assertEqual(len(rows), 1 + 3 * 3 + 1)   # none; text/latent/both per speech; one transplant
+        self.assertEqual(len(rows), 2 + 3 * 5 + 1)   # none, artifact; 3 texts, latent, both per speech; one transplant
+        self.assertGreater(rows[("-", "artifact", False)]["post_kb"], 0)
         self.assertIsNotNone(rows[("lie", "text", False)]["said_in_code"])
         self.assertIsNotNone(rows[("honest", "latent", True)]["other_in_code"])
+
+    def test_measure_load_setting(self):
+        import json
+        import tempfile
+        from benchmark import measure
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+            measure.main(["--backend", "mock", "--n", "3", "--posts", "3", "--channel", "text,transcript",
+                          "--speech", "lie", "--out", d])
+            with open(os.path.join(d, "rows.jsonl")) as f:
+                rows = [json.loads(line) for line in f]
+        self.assertEqual({r["posts"] for r in rows}, {3})
+        msg, block = measure.present_many("text", ["a", "b"], [make_project(0), make_project(1)])
+        self.assertIn(f"[post 1] from agent2 on `{make_project(1).class_name}.encode`", block)
+        self.assertIn("[assistant]", measure.text_of("transcript", make_project(0), "STATUS: DONE"))
 
 
 if __name__ == "__main__":

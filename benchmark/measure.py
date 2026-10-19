@@ -2,11 +2,15 @@
 
     python -m benchmark.measure --backend hf --n 40 --speech honest,omit,lie --channel none,text,latent,both \
         --writer random:16,chunk:16 --out runs/measure
+    python -m benchmark.measure --channel none,text,artifact,kv --writer kv:full,kv:snap:64 --out runs/measure_kv
 
 No forum is run. For each project the producer's context is synthesized (the forum's own prompts, the
 reference `encode` and a templated report), and the report either states the true format (honest),
 leaves it out (omit) or states a false one (lie). The reader, the same frozen model, gets the post
-through one channel: nothing, the text, the latent post, or both. It then (a) is asked what
+through one channel: nothing, the text, the latent post, both, the producer's code pasted as text
+(`artifact`, independent of what the author says), the report followed by that code (`text_artifact`),
+the author's whole session pasted as a message (`transcript`: what a whole KV post holds, in the same
+order), or the author's KV cache placed before the reader's prompt (`kv`, model/kv_posts.py). It then (a) is asked what
 `encode(sample)` returns and (b) implements the consumers. Per condition:
 
 - transmission: consumer code that passes its isolated hidden tests
@@ -18,7 +22,14 @@ through one channel: nothing, the text, the latent post, or both. It then (a) is
 - transplant (latent only): the reader gets another project's post; other_in_code counts that
   project's tag in the reader's code, a causal check that the content comes from the post.
 
-Writers: `random:K` is the method (untrained gist head with K queries), `chunk:K` the pooling baseline.
+`--posts M` is the load setting: the reader gets M posts at once, its producer's and those of M - 1
+other projects, in a random order, each headed with its class. `kv` posts are laid end to end, or with
+`--layout parallel` all at the positions they were written at; `--dedup` keeps their shared system turn once;
+`--joint` is the diagnostic: the M sessions are encoded together in one pass, as if one author had them all.
+
+Writers: `random:K` is the method (untrained gist head with K queries), `chunk:K` the pooling baseline;
+for `kv`: `kv:full`, `kv:snap:B` (B entries the report attends to most), `kv:recent:B` (the last B),
+`kv:uniform:B` (evenly spaced); all but `full` also keep the first 4 entries.
 """
 from __future__ import annotations
 
@@ -26,17 +37,19 @@ import argparse
 import json
 import logging
 import os
+import random
 from collections import defaultdict
 
 from benchmark.evaluate import isolated_ok
-from benchmark.secret_tasks import EXPLICIT, SPEECH, VAGUE, false_secret, forum_block, producer_context, report, \
-    secret_item, use_item
+from benchmark.secret_tasks import EXPLICIT, SPEECH, VAGUE, artifact, false_secret, forum_block, producer_context, \
+    report, secret_item, use_item
 from benchmark.secretbench import make_project
 from forum import prompts as P
 from model.backends.base import LATENT_MARK
 
 log = logging.getLogger("measure")
-CHANNELS = ("none", "text", "latent", "both")
+CHANNELS = ("none", "text", "artifact", "text_artifact", "transcript", "latent", "both", "kv")
+TEXTS = ("text", "artifact", "text_artifact", "transcript")
 TAGGED = ("decode", "is_record")   # the consumers whose code must contain the tag
 
 
@@ -48,21 +61,56 @@ def make_post(writer, project, speech: str, tmpl_i: int):
     return text, (writer.write(ctx[:-1], text) if writer is not None else None)
 
 
-def read(backend, project, channel: str, text: str, lat, consumers, max_new_tokens: int) -> dict:
-    """The reader's answer about `encode`, and its code for each consumer."""
+def transcript(messages) -> str:
+    """The author's session as plain text, turn by turn."""
+    return "\n\n".join(f"[{m['role']}]\n{m['content']}" for m in messages)
+
+
+def text_of(channel, project, report_text) -> str:
+    """The text a text-channel post carries."""
+    if channel == "artifact":
+        return artifact(project)
+    if channel == "text_artifact":
+        return report_text + "\n\n" + artifact(project, status=False)
+    if channel == "transcript":
+        return transcript(producer_context(project, report_text))
+    return report_text
+
+
+def reader_chat(backend, channel, lat):
+    """chat(messages, max_new_tokens, **kw) for a reader that receives `lat` through `channel`."""
+    if channel == "kv":
+        from model.kv_posts import chat_after
+        return lambda msgs, n, **kw: chat_after(backend, lat, msgs, max_new_tokens=n)
     lats = [lat] if channel in ("latent", "both") else []
-    msg = {"none": "(no message)", "text": text, "latent": LATENT_MARK.format(i=0),
-           "both": text + "\n" + LATENT_MARK.format(i=0)}[channel]
+    return lambda msgs, n, **kw: backend.chat(msgs, lats, max_new_tokens=n, **kw)
+
+
+def present(channel, text):
+    """(the message the reader is asked about, the forum block it writes code with) for one post."""
+    msg = text if channel in TEXTS else {"none": "(no message)", "latent": LATENT_MARK.format(i=0),
+                                         "both": text + "\n" + LATENT_MARK.format(i=0), "kv": P.KV_NOTE}[channel]
+    return msg, forum_block("text" if channel in TEXTS else channel, text)
+
+
+def present_many(channel, texts, projects):
+    """The load setting: one post per project, each headed with its class."""
+    entries = [(P.post_head(t, f"agent{t + 1}", f"{p.class_name}.encode"), text if channel in TEXTS else P.KV_NOTE)
+               for t, (text, p) in enumerate(zip(texts, projects))]
+    block = P.forum_section(entries, latent=channel == "kv")
+    return block.strip(), block
+
+
+def read(project, chat, msg: str, block: str, consumers, max_new_tokens: int) -> dict:
+    """The reader's answer about `encode`, and its code for each consumer."""
     q, record = secret_item(project, msg)
-    answer = backend.chat([{"role": "system", "content": P.PROBE_SYSTEM}, {"role": "user", "content": q}], lats,
-                          purpose="probe", meta={"question": "secret"}, max_new_tokens=40).text
+    answer = chat([{"role": "system", "content": P.PROBE_SYSTEM}, {"role": "user", "content": q}], 40,
+                  purpose="probe", meta={"question": "secret"}).text
     out = {"answer": answer.strip()[:120], "answer_exact": record in answer, "code": {}, "ok": {}}
-    block = forum_block(channel, text)
     for name in consumers:
         prompt, _, system = use_item(project, name, block)
-        g = backend.chat([{"role": "system", "content": system}, {"role": "user", "content": prompt}], lats,
-                         purpose="implement", meta={"subtask": project.subtask(name), "agent": "reader", "attempt": 0},
-                         max_new_tokens=max_new_tokens)
+        g = chat([{"role": "system", "content": system}, {"role": "user", "content": prompt}], max_new_tokens,
+                 purpose="implement", meta={"subtask": project.subtask(name), "agent": "reader", "attempt": 0})
         out["ok"][name], code = isolated_ok(project, name, g.text)
         out["code"][name] = (code or g.text)[:800]
     return out
@@ -77,22 +125,39 @@ def score(project, said: dict | None, other: dict | None, r: dict) -> dict:
             "known_in_answer": float(tag in r["answer"]), "other_in_code": frac(other["tag"]) if other else None}
 
 
+def post_kb(channel, text, lat) -> float | None:
+    """What the post costs to store and send: UTF-8 text, or the latent / KV tensors."""
+    if channel == "none":
+        return None
+    n = len(text.encode()) if channel in TEXTS else getattr(lat, "nbytes", 0)
+    if channel == "both":
+        n += len(text.encode())
+    return round(n / 1024, 1)
+
+
 def conditions(speeches, channels, writers):
-    """(speech, channel, writer spec, transplant); `none` needs neither speech nor writer."""
-    out = [("-", "none", "-", False)] if "none" in channels else []
+    """(speech, channel, writer spec, transplant). `none` and `artifact` do not depend on what the
+    author says; `kv` pairs with the kv:* writers, `latent` and `both` with the others."""
+    out = [("-", ch, "-", False) for ch in ("none", "artifact") if ch in channels]
+    kv = [w for w in writers if w.startswith("kv:")]
+    soft = [w for w in writers if not w.startswith("kv:")]
     for sp in speeches:
-        if "text" in channels:
-            out.append((sp, "text", "-", False))
-        for w in writers:
-            out += [(sp, ch, w, False) for ch in ("latent", "both") if ch in channels]
-            if "latent" in channels and sp == "honest":
-                out.append((sp, "latent", w, True))
+        out += [(sp, ch, "-", False) for ch in ("text", "text_artifact", "transcript") if ch in channels]
+        for chs, ws in ((("latent", "both"), soft), (("kv",), kv)):
+            for w in ws:
+                out += [(sp, ch, w, False) for ch in chs if ch in channels]
+                if chs[0] in channels and sp == "honest":
+                    out.append((sp, chs[0], w, True))
     return out
 
 
 def make_writer_spec(backend, spec: str):
     from model.writers import make_writer
     kind, _, k = spec.partition(":")
+    if kind == "kv":
+        from model.kv_posts import KVWriter
+        mode, _, budget = k.partition(":")
+        return KVWriter(backend, mode, int(budget or 0))
     return make_writer(backend, int(k or 16)) if kind == "chunk" else make_writer(backend, head=spec)
 
 
@@ -106,7 +171,8 @@ def summarize(rows) -> list[dict]:
                                 max(1, sum(v[k] is not None for v in scores)), 4)
                           if any(v[k] is not None for v in scores) else None)
         row = {"speech": sp, "channel": ch, "writer": w, "transplant": tr, "n": len(scores),
-               **{k: mean(k) for k in ("transmission", "known_in_code", "said_in_code", "known_in_answer", "other_in_code")}}
+               **{k: mean(k) for k in ("transmission", "known_in_code", "said_in_code", "known_in_answer", "other_in_code",
+                                       "post_kb")}}
         kc, ka = row["known_in_code"], row["known_in_answer"]
         row["use_report_gap"] = round(kc - ka, 4) if kc is not None and ka is not None else None
         out.append(row)
@@ -115,7 +181,7 @@ def summarize(rows) -> list[dict]:
 
 def table(summary) -> str:
     cols = ["speech", "channel", "writer", "transplant", "n", "transmission", "known_in_code", "said_in_code",
-            "known_in_answer", "use_report_gap", "other_in_code"]
+            "known_in_answer", "use_report_gap", "other_in_code", "post_kb"]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     lines += ["| " + " | ".join("–" if s[c] is None else str(s[c]) for c in cols) + " |" for s in summary]
     return "\n".join(lines)
@@ -133,6 +199,10 @@ def main(argv=None):
     ap.add_argument("--channel", default=",".join(CHANNELS))
     ap.add_argument("--writer", default="random:16", help="comma-separated: random:K (the method), chunk:K, or a head path")
     ap.add_argument("--consumers", default=",".join(TAGGED))
+    ap.add_argument("--posts", type=int, default=0, help="M > 0: the load setting with M posts per reader")
+    ap.add_argument("--layout", default="sequential", choices=("sequential", "parallel"), help="kv posts under load")
+    ap.add_argument("--dedup", action="store_true", help="kv posts under load: keep the shared system turn once")
+    ap.add_argument("--joint", action="store_true", help="kv posts under load: encode the M sessions in one pass")
     ap.add_argument("--max-new-tokens", type=int, default=384)
     ap.add_argument("--out", default="runs/measure")
     a = ap.parse_args(argv)
@@ -148,6 +218,8 @@ def main(argv=None):
     projects = [make_project(i, 0, a.tag_len) for i in range(a.start, a.start + a.n)]
     consumers = a.consumers.split(",")
     conds = conditions(a.speech.split(","), a.channel.split(","), a.writer.split(","))
+    if a.posts and any(ch not in TEXTS + ("kv",) for _, ch, _, _ in conds):
+        ap.error("--posts works with the text channels and kv")
     log.info("%d projects (%.1f bits) x %d conditions -> %s", len(projects), projects[0].meta["bits"], len(conds), a.out)
 
     writers, rows = {}, []
@@ -156,14 +228,30 @@ def main(argv=None):
             if w != "-" and w not in writers:
                 writers[w] = make_writer_spec(backend, w)
             posts = [make_post(writers.get(w), p, "honest" if sp == "-" else sp, i) for i, p in enumerate(projects)]
+            posts = [(text_of(ch, p, text), lat) for (text, lat), p in zip(posts, projects)]
             for i, p in enumerate(projects):
                 j = (i + 1) % len(projects) if transplant else i   # transplant: the next project's post
-                text, lat = posts[j]
-                r = read(backend, p, ch, text, lat, consumers, a.max_new_tokens)
+                if a.posts:
+                    idx = [(j + t) % len(projects) for t in range(a.posts)]
+                    random.Random(i).shuffle(idx)
+                    msg, block = present_many(ch, [posts[x][0] for x in idx], [projects[x] for x in idx])
+                    lat = None
+                    if ch == "kv" and a.joint:
+                        joint = [m for x in idx for m in producer_context(projects[x], posts[x][0])]
+                        lat = writers[w].write(joint[:-1], joint[-1]["content"])
+                    elif ch == "kv":
+                        from model.kv_posts import concat
+                        lat = concat(backend, [posts[x][1] for x in idx], a.layout, a.dedup)
+                    kb = round(sum(post_kb(ch, *posts[x]) for x in idx), 1)
+                else:
+                    text, lat = posts[j]
+                    msg, block = present(ch, text)
+                    kb = post_kb(ch, text, lat)
+                r = read(p, reader_chat(backend, ch, lat), msg, block, consumers, a.max_new_tokens)
                 said = false_secret(p) if sp == "lie" else None
                 other = projects[j].meta["secret"] if transplant else None
                 row = {"project": p.pid, "speech": sp, "channel": ch, "writer": w, "transplant": transplant,
-                       "score": score(p, said, other, r), **r}
+                       "posts": a.posts or 1, "score": score(p, said, other, r) | {"post_kb": kb}, **r}
                 rows.append(row)
                 f.write(json.dumps(row) + "\n")
             log.info("done %s/%s/%s%s", sp, ch, w, " transplant" if transplant else "")

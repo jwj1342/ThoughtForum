@@ -132,6 +132,49 @@ class TestHFBackend(unittest.TestCase):
         self.assertEqual(lat.data.shape[0], 3)
         self.assertEqual(load_head("random:6:1", self.b).k, 6)
 
+    def test_kv_posts(self):
+        from model.kv_posts import KVWriter, chat_after
+        report = "STATUS: DONE\nencode works"
+        full = KVWriter(self.b).write(self.msgs, report)
+        self.assertEqual(full.k, full.end)
+        snap = KVWriter(self.b, "snap", 8).write(self.msgs, report)
+        self.assertEqual((snap.k, snap.end, tuple(snap.layers[0][0].shape[1:])), (8, full.end, (2, 8, 16)))
+        recent = KVWriter(self.b, "recent", 8).write(self.msgs, report)
+        self.assertTrue(torch.equal(recent.layers[1][1][:, :, 4:], full.layers[1][1][:, :, -4:]))
+        self.assertTrue(torch.equal(recent.layers[1][1][:, :, :4], full.layers[1][1][:, :, :4]))   # the sinks
+        self.assertEqual(KVWriter(self.b, "uniform", 8).write(self.msgs, report).k, 8)
+        # the whole cache as a prefix is the author's context itself: greedy replies match
+        reader = [{"role": "user", "content": "Go on."}]
+        g = chat_after(self.b, full, reader, max_new_tokens=4, temperature=0)
+        author = self.b.render(self.msgs + [{"role": "assistant", "content": report}], add_generation_prompt=False)
+        ids = torch.cat([self.b.tok(t, add_special_tokens=False, return_tensors="pt").input_ids
+                         for t in (author, self.b.render(reader))], 1).to(self.b.device)
+        out = self.b.model.generate(input_ids=ids, attention_mask=torch.ones_like(ids), do_sample=False,
+                                    max_new_tokens=4, eos_token_id=None, pad_token_id=0)
+        self.assertEqual(g.text, self.b.tok.decode(out[0, ids.shape[1]:], skip_special_tokens=True).strip())
+
+    def test_kv_concat_shifts_positions(self):
+        from model.kv_posts import KVWriter, _layer_kv, concat
+        report = "STATUS: DONE\nencode works"
+        post = KVWriter(self.b).write(self.msgs, report)
+        two, n = concat(self.b, [post, post]), post.end
+        self.assertEqual((two.k, two.end), (2 * n, 2 * n))
+        # the second copy is the same context computed n positions later
+        author = self.b.render(self.msgs + [{"role": "assistant", "content": report}], add_generation_prompt=False)
+        ids = self.b.tok(author, add_special_tokens=False, return_tensors="pt").input_ids.to(self.b.device)
+        out = self.b.model.model(input_ids=ids, position_ids=torch.arange(n, 2 * n, device=self.b.device)[None],
+                                 use_cache=True)
+        k, v = _layer_kv(out.past_key_values, 1)
+        self.assertTrue(torch.allclose(two.layers[1][0][:, :, n:].cpu(), k.cpu(), atol=1e-4))
+        self.assertTrue(torch.allclose(two.layers[1][1][:, :, n:].cpu(), v.cpu(), atol=1e-4))
+        c = post.shared
+        self.assertGreater(c, 0)
+        par = concat(self.b, [post, post], "parallel", dedup=True)
+        self.assertEqual((par.k, par.end), (2 * n - c, n))
+        self.assertTrue(torch.equal(par.layers[1][0][:, :, n:].cpu(), post.layers[1][0][:, :, c:]))
+        seq = concat(self.b, [post, post], dedup=True)
+        self.assertEqual((seq.k, seq.end), (2 * n - c, 2 * n - c))
+
     def test_only_the_head_gets_gradients(self):
         from model.hf_writers import GistWriter, random_head
         from training.common import batch_loss

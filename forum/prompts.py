@@ -77,6 +77,8 @@ ARTIFACT = """Method `{name}` of class `{cls}`:
 ```
 CI visible test: {result}"""
 
+KV_NOTE = "(shared memory: the author's working session, attached before this conversation)"
+
 PROBE_SYSTEM = "You are inspecting a message one teammate left for another."
 
 PROBE = {
