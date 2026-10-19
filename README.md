@@ -50,7 +50,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    S["生产者知道一个私有格式<br/>例如 JJGF!1965!Herbert!Dune"] --> W{"作者的话"}
+    S["两个生产者各知道一种私有格式<br/>例如 RDJL~ember~000251~I300~68"] --> W{"作者的话"}
     W --> W1["如实"]
     W --> W2["省略"]
     W --> W3["说错"]
@@ -63,13 +63,13 @@ flowchart LR
 
 要测一条消息传了多少信息，这条信息最好是猜不出来的，对错也能客观判定。
 
-所以我们造了 SecretBench。每个项目里，生产者 `encode` 按一个随机生成的私有格式写记录。三个消费者方法必须知道这个格式才能写对，而它们的文档和可见测试都不透露格式，只能从帖子里得知。
+所以我们造了 SecretBench。每个项目里有两个生产者：`encode` 按一种随机生成的私有格式写记录，`export` 按另一种写导出串。五个消费者必须知道这些格式才能写对，其中 `migrate` 要同时用到两种格式，也就是要同时读懂两条帖子。消费者的文档和可见测试都不透露格式，格式只能从帖子里得知。
 
 详见 [`doc/benchmark.md`](doc/benchmark.md)。
 
 ## 目前看到的现象
 
-以下都是初步结果：只用了一个模型（Qwen3-8B）、一个随机种子、几十个项目。
+以下都是初步结果：只用了一个模型（Qwen3-8B）、一个随机种子、40 个项目，用的是升级前的简单版 SecretBench（每个项目只有一个生产者）。按统计功效重做的实验在跑：200 个项目 × 3 个种子，带置信区间和配对检验，见 `experiments/`。
 
 | 现象 | 证据 |
 |---|---|
@@ -78,11 +78,12 @@ flowchart LR
 | **绕过作者的嘴，文字证据也更准。** 直接把代码和测试日志贴上论坛，比作者自己写的汇报传得更多，团队谎报完成也更少，只是更贵 | 论坛里跨 agent 的消费者通过率：贴代码 0.68，作者汇报 0.48，潜在帖子 0.01，不交流 0；团队宣布完成、隐藏测试却不过：0.30 对 0.83；提示 token 多 1.7 倍 |
 | **把作者手里的 KV cache 当帖子，内容就传过去了，而且读者跟着作者的代码走、不跟着作者的话走。** 不过把作者的整段会话写成文字也一样，所以起作用的是"分享工作现场"，不是 KV 本身 | 作者把格式说错时：文字汇报 0（88% 照着假格式写），KV 帖子 0.86，会话原文写成文字 0.78，两者都 0% 用假格式。KV 帖子 66 MB，会话文字 1.8 KB |
 | **分别写的 KV 帖子放在一起就读不了。** 一条读得很好，四条就垮了；把四段会话一起编码、或者写成文字，都没问题 | 同时收到 4 条帖子：分别编码的 KV 0.15，一起编码的 KV 0.85，会话文字 0.81 |
+| **把论坛做成一条共享潜在流，帖子就能组合了，在多 agent 论坛里也能用；但它的好处来自分享会话，不来自"隐式"** | 论坛里跨 agent 的消费者通过率：共享潜在流 0.89，会话写成文字 0.87（差 −0.02，95% 置信区间 −0.10 到 +0.06），作者汇报 0.48；全员说错格式时，共享潜在流 0.87，作者汇报 0.33 |
 | **在任务上训练写入端，会收成模板** | 训练后读者写出格式规整、标签却错的记录，例如 `'PZQX~1965~Herbert~Dune'`（真值是 `'JJGF!1965!Herbert!Dune'`） |
 
 > 更正：之前这里写过"零训练的潜在帖子比文字传得更准""读者用得出、说不出"，那来自评测代码的一个 bug（读者实际收到的是文字），已撤回。详见研究笔记的 R13。
 
-完整的实验记录（R1–R17）见 [`doc/research_notes.md`](doc/research_notes.md)。
+完整的实验记录（R1–R18）见 [`doc/research_notes.md`](doc/research_notes.md)。
 
 ## 仓库里有什么
 
@@ -91,7 +92,7 @@ model/        方法本身：后端（mock / 本地 HF 模型 / API）、潜在�
 benchmark/    SecretBench 与 ClassEval 任务、共享代码区、测试沙箱、基于执行的评测
 forum/        多 agent 论坛：调度、单个 agent 的工作流程、帖子与出处、提示词、指标
 training/     训练类的消融实验（读取侧 adapter、writer head）
-analysis/     结果分析：对比表、配对检验、线性探针、SecretBench 专用统计
+analysis/     结果分析：置信区间与配对检验、对比表、线性探针
 experiments/  每个实验一个脚本，本地用 bash 跑，集群上用 sbatch 提交
 data/         ClassEval 数据（FudanSELab，MIT 许可），以及我们筛过的可用类
 tests/        单元测试
@@ -153,7 +154,7 @@ python -m forum.run --backend api --model qwen3-8b \
 
 ```bash
 bash experiments/smoke.sh                              # 本地：用真模型把每个入口都简短跑一遍
-sbatch --account=<你的账户> experiments/e0s3.sh          # 有 Slurm 的集群上
+sbatch --account=<你的账户> --array=0-20 experiments/offline.sh   # 有 Slurm 的集群上：离线测量
 ```
 
 个人的设置（模型路径等）写在 `experiments/local.sh` 里，这个文件不会入库。在 Alliance（Compute Canada）的集群上，脚本会自动改用模块系统和 wheelhouse。
@@ -172,5 +173,5 @@ sbatch --account=<你的账户> experiments/e0s3.sh          # 有 Slurm 的集�
 - [`doc/method.md`](doc/method.md)：方法。
 - [`doc/benchmark.md`](doc/benchmark.md)：测量基准。
 - [`doc/code_guide.md`](doc/code_guide.md)：代码导览、实验开关、输出与实验脚本。
-- [`doc/research_notes.md`](doc/research_notes.md)：完整研究笔记，包括文献判断、设计取舍、R1–R17 实验记录、现象与风险。
+- [`doc/research_notes.md`](doc/research_notes.md)：完整研究笔记，包括文献判断、设计取舍、R1–R18 实验记录、现象与风险。
 - [`literature/`](literature/)：文献索引，用浏览器打开 `literature/literature_review.html` 即可离线浏览。论文 PDF 不入库，可用 `literature/tools/fetch_pdfs.py` 重新下载。

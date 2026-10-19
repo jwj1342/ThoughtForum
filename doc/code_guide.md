@@ -43,13 +43,13 @@ flowchart BT
 ## benchmark/：任务与评测
 
 - `tasks.py`：项目和子任务的数据结构、ClassEval 读取、玩具项目、私有规格的视图。`--tasks` 的写法也在这里解析。
-- `secretbench.py`：生成 SecretBench 项目。
-- `secret_tasks.py`：离线测量用的样本，包括合成的生产者上下文、读者的问题和消费者的提示。
+- `secretbench.py`：生成 SecretBench 项目，每个项目有两个生产者、五个消费者，设计见 `benchmark.md`。
+- `secret_tasks.py`：离线测量用的材料，包括合成的生产者会话、三种汇报（如实、省略、说错）、读者的问题和消费者的提示。
 - `workspace.py`：共享代码区。每个方法有版本号，只能由认领它的 agent 写；`isolated` 把其他方法换成参考实现。
 - `sandbox.py`：在子进程里跑测试，带超时；在 Linux 和 macOS 上还有资源限制。临时目录跟随 `TMPDIR`。
 - `evaluate.py`：基于执行的评测。`run` 跑一段测试；`hidden` 给出一个方法的整体和隔离两种隐藏测试结果；`evaluate` 评整个项目；`isolated_ok` 给单条回复打分。
 - `validate.py`：挑出 ClassEval 里参考实现自己能过测试的类，结果写在 `data/classeval_valid.json`。
-- `measure.py`：离线 SecretBench 测量的入口（主线实验）。合成生产者上下文，作者的话分如实 / 省略 / 说错，读者经某个信道收到帖子后回答问题、写消费者代码，输出传递率、跟随所知还是所言、用说差，以及移植对照。
+- `measure.py`：离线 SecretBench 测量的入口（主线实验）。合成生产者会话，读者经某个信道收到它依赖的帖子后，回答问题、写消费者代码。每个（项目，消费者，种子）记一行：是否通过、跟随所知还是所言、直接问得出、代价。`--load M` 是同时收到多条帖子的负载设定，`--transplant` 是移植对照。
 
 ## forum/：多 agent 论坛
 
@@ -68,12 +68,11 @@ flowchart BT
 - `training/common.py`：几个训练脚本共用的部分，包括目标 token 上的损失、AdamW 训练循环、按项目划分数据、命令行参数。
 - `training/reader.py`、`training/writer.py`、`training/secret.py`：分别对应 E1a、E1w、E1s。`training.secret --steps 0` 就是对本方法本身做离线 SecretBench 评测。
 - `analysis/` 下的分析脚本：
-  - `tables.py`：带置信区间的对比表；
-  - `paired.py`：配对符号检验；
+  - `stats.py`：主要的统计工具。按项目聚类的 bootstrap 置信区间，同一批条目上的配对差值、精确 McNemar 检验和 Holm 校正；离线测量和论坛的输出都能读；
+  - `tables.py`：论坛条件的项目级指标对比表；
+  - `paired.py`：配对符号检验（`stats.py` 也用它）；
   - `linprobe.py`：线性探针；
   - `neutral_probe.py`：中性上下文对照；
-  - `secret_cross.py`：只统计"生产者是别的 agent"的消费者通过率；
-  - `secret_mislead.py`：检查每条生产者帖子把格式说对还是说错。
 
 ## 实验开关
 
@@ -122,22 +121,17 @@ flowchart BT
 
 `#SBATCH` 那几行是按我们用的集群（Nibi 的 40GB MIG 切片）写的，在本地会被当成注释忽略，换别的集群时改这几行即可。
 
+现在这项研究的实验各自一个脚本。条件、规模、种子和数组下标的含义都写在脚本开头，改设计就改脚本，整组重跑：
+
 | 脚本 | 实验 |
 |---|---|
 | `smoke.sh` | 用真模型把每个入口都简短跑一遍 |
-| `e0.sh`、`run.sh` | ClassEval 上的第一轮测量（R1–R3、R5） |
-| `e0p.sh` | 私有规格（R6） |
-| `e0d.sh`、`neutral.sh` | 连贯谎言与中性上下文对照（R3、R7、R8） |
-| `e0ck.sh` | 同伴交叉验证；不分块的潜在帖子（R4、R9） |
-| `e1a.sh`、`e1b.sh` | 训练读取侧 adapter，并接回论坛（R4） |
-| `e1w.sh`、`e1w_forum.sh` | 训练 writer，并接回论坛（R12） |
-| `e0s.sh`、`e0s2.sh` | SecretBench 论坛（R10、R11） |
-| `e1s.sh`、`e1s2.sh` | SecretBench 离线评测与训练诊断（R13） |
-| `e0s3.sh`、`e0s4.sh` | 本方法放进 SecretBench 论坛：作者诚实 / 作者把格式说错 |
-| `measure.sh` | 离线 SecretBench 测量（主线）：如实 / 省略 / 说错 × 文字 / 潜在帖子 / 两者都给，以及容量曲线 |
-| `e0st.sh` | 共享潜在流接入 SecretBench 论坛：作者诚实 / 全员说错格式 |
-| `measure_kv.sh` | 离线测量 KV 帖子（R16、R17）：整份、按汇报注意力选 B 条、最后 B 条、均匀 B 条；对照文字、贴代码、会话原文；容量；同时收到 M 条帖子的负载 |
-| `probe_cpu.sh` | 只用 CPU 跑线性探针 |
+| `offline.sh` | 离线测量：200 个项目 × 3 个种子，全部信道 × 如实 / 省略 / 说错，带移植对照 |
+| `load.sh` | 负载：每个读者同时收到 2 / 4 / 8 条帖子 |
+| `forum.sh` | SecretBench 论坛：120 个项目 × 3 个种子，作者诚实 / 全员说错格式 |
+| `classeval.sh` | ClassEval 论坛（真实代码）：70 个类 × 3 个种子 |
+
+更早的 ClassEval 实验脚本（`e0*.sh`、`e1*.sh`、`run.sh`、`neutral.sh`、`probe_cpu.sh`）对应研究笔记里的 R1–R9、R12。依赖旧版 SecretBench 的脚本已经删除，它们的代码在提交 b4d81db。
 
 ## 测试
 
