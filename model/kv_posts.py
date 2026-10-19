@@ -155,8 +155,12 @@ class KVStream:
         return Latent({"segment": len(self.segs) - 1}, m, nbytes=m * per, origin="stream", meta=dict(meta or {}))
 
     def prefix(self, posts) -> KVPost:
-        """The segments of `posts`, in stream order; they keep their positions, as if the rest were evicted."""
+        """The segments of `posts`, in stream order, after the stream's first SINKS entries (attention sinks);
+        they keep their positions, as if the rest were evicted. Without the sinks a segment other than the
+        first is all but unreadable (R19)."""
         spans = sorted(self.segs[p.data["segment"]] for p in posts)
+        if spans[0][0] > 0:
+            spans = [(0, SINKS)] + spans
         layers = [(torch.cat([k[:, :, a:z] for a, z in spans], 2), torch.cat([v[:, :, a:z] for a, z in spans], 2))
                   for k, v in self.layers]
         return KVPost(layers, self.pos, layers[0][0].shape[2], sum(p.nbytes for p in posts))

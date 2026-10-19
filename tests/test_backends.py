@@ -169,7 +169,7 @@ class TestHFBackend(unittest.TestCase):
         self.assertTrue(torch.allclose(two.layers[1][1][:, :, n:].cpu(), v.cpu(), atol=1e-4))
 
     def test_kv_stream(self):
-        from model.kv_posts import _layer_kv
+        from model.kv_posts import SINKS, _layer_kv
         from model.writers import make_stream
         s = make_stream(self.b)
         a = s.append(self.msgs, "STATUS: DONE\nfirst")
@@ -183,9 +183,11 @@ class TestHFBackend(unittest.TestCase):
                         1).to(self.b.device)
         k, v = _layer_kv(self.b.model.model(input_ids=ids, use_cache=True).past_key_values, 1)
         self.assertTrue(torch.allclose(both.layers[1][0].cpu(), k.cpu(), atol=1e-4))
-        only_b = s.prefix([b])
-        self.assertEqual((only_b.k, only_b.end), (b.k, a.k + b.k))
-        self.assertTrue(torch.equal(only_b.layers[1][1], both.layers[1][1][:, :, a.k:]))
+        only_b = s.prefix([b])   # the stream's attention sinks, then b
+        self.assertEqual((only_b.k, only_b.end), (SINKS + b.k, a.k + b.k))
+        self.assertTrue(torch.equal(only_b.layers[1][1][:, :, :SINKS], both.layers[1][1][:, :, :SINKS]))
+        self.assertTrue(torch.equal(only_b.layers[1][1][:, :, SINKS:], both.layers[1][1][:, :, a.k:]))
+        self.assertEqual(s.prefix([a]).k, a.k)
         g = s.chat(only_b, [{"role": "user", "content": "Go on."}], max_new_tokens=3)
         self.assertGreaterEqual(g.gen_tokens, 0)
 
