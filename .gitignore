@@ -15,3 +15,6 @@ venv/
 
 # personal settings for experiment scripts (model paths, ...)
 experiments/local.sh
+
+# meeting slides (an Overleaf project, kept there)
+meetingslides/

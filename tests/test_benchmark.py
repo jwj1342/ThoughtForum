@@ -157,15 +157,43 @@ class TestSecretBench(unittest.TestCase):
                 return summary, [json.loads(line) for line in f]
 
     def test_measure_on_the_mock(self):
-        summary, rows = self._measure("--n", "3", "--channel", "none,full_spec,text,artifact,session,latent,stream",
+        summary, rows = self._measure("--n", "3", "--channel", "none,full_spec,text,artifact,session,latent,stream,turns",
                                       "--transplant")
-        self.assertEqual(len(summary), 3 + 3 * 4 + 2)   # none, full_spec, artifact; 4 channels per speech; 2 transplants
+        self.assertEqual(len(summary), 3 + 3 * 5 + 2)   # none, full_spec, artifact; 5 channels per speech; 2 transplants
         self.assertEqual(len(rows), len(summary) * 3 * len(CONSUMERS))
         self.assertIsNotNone(summary[("lie", "text", False)]["said"])
         self.assertIsNotNone(summary[("honest", "stream", True)]["other"])
         self.assertTrue(all(set(r["answers"]) == {"encode", "export"} for r in rows if r["consumer"] == "migrate"))
         self.assertTrue(all(r["post_bytes"] > 0 for r in rows if r["channel"] == "session"))
         self.assertTrue(all(isinstance(r["delegated"], list) for r in rows))
+        self.assertTrue(all(r["post_bytes"] > 0 for r in rows if r["channel"] == "turns"))
+        turns = next(r for r in rows if r["channel"] == "turns" and r["consumer"] == "decode")
+        stream = next(r for r in rows if r["channel"] == "stream" and r["consumer"] == "decode")
+        self.assertGreater(turns["prompt_tokens"], stream["prompt_tokens"])   # it reads the session as tokens
+        from analysis.breakdown import measure_tables
+        self.assertIn("honest/turns/load0", measure_tables(rows))
+
+    def test_false_format_changes_only_the_words(self):
+        """In the forum the harness writes a lying producer's report; its STATUS line stays true and it retries."""
+        import contextlib
+        import io
+        import json
+        import tempfile
+        from analysis.stats import forum_items
+        from forum import run as forum_run
+        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+            forum_run.main(["--backend", "mock", "--tasks", "secret:2", "--n-agents", "3", "--rounds", "6", "--spec", "private",
+                            "--overclaim-frac", "1.0", "--overclaim-mode", "false_format", "--channel", "text", "--out", d])
+            cond = next(os.path.join(d, x) for x in os.listdir(d) if os.path.isdir(os.path.join(d, x)))
+            with open(os.path.join(cond, "events.jsonl")) as f:
+                work = [e for e in map(json.loads, f) if e.get("type") == "work" and e["method"] in PRODUCERS]
+            self.assertTrue(work)
+            for e in work:
+                p = S.project_of(e["project"])
+                self.assertNotIn(p.meta["formats"][e["method"]]["tag"], e["report"])
+                self.assertIn(S.false_format(p, e["method"])["tag"], e["report"])
+                self.assertEqual(e["claimed"] == "DONE", e["visible_ok"])
+            self.assertIsInstance(forum_items(cond, "first"), dict)
 
     def test_measure_load(self):
         from benchmark import measure

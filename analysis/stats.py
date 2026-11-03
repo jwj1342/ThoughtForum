@@ -2,10 +2,13 @@
 
     python -m analysis.stats forum runs/e0st_<id>/mislead/*/ runs/e0s4_<id>/text/*/
     python -m analysis.stats measure runs/measure_kv_<id>/*/rows.jsonl --ref "lie/text/-/1"
+    python -m analysis.stats forum runs/forum_<id>/*/honest/*/ --items first
 
 An item is one consumer method of one project; it passes when its isolated hidden tests pass.
 - forum: methods with dependencies none of which the method's own author wrote (the ones that
   measure the channel: SecretBench consumers, ClassEval callers); with --items all, every method.
+  With --items first, the first attempt at each such method: whether its author goes on to retry
+  depends on what it claims, which differs between settings.
 - measure: every (project, consumer, seed) row of benchmark/measure.py, grouped by speech /
   channel / load (and "T" for the transplant control); seeds are repeated measures of one item.
 
@@ -31,6 +34,8 @@ def forum_items(cond_dir: str, which: str = "cross") -> dict:
     """{(project, method, seed): passed} for one forum condition directory."""
     with open(os.path.join(cond_dir, "config.json")) as f:
         seed = json.load(f).get("seed", 0)
+    if which == "first":
+        return first_attempts(cond_dir, seed)
     out = {}
     for line in open(os.path.join(cond_dir, "projects.jsonl")):
         r = json.loads(line)
@@ -41,6 +46,22 @@ def forum_items(cond_dir: str, which: str = "cross") -> dict:
                 continue
             out[(r["project"], m, seed)] = bool(v["iso_ok"])
     return out
+
+
+def first_attempts(cond_dir: str, seed: int) -> dict:
+    """{(project, method, seed): passed} on the first attempt at each method whose deps others worked on."""
+    deps = {}
+    for line in open(os.path.join(cond_dir, "projects.jsonl")):
+        r = json.loads(line)
+        deps.update({(r["project"], m): v.get("deps", []) for m, v in r["methods"].items()})
+    worked, first = defaultdict(set), {}
+    for line in open(os.path.join(cond_dir, "events.jsonl")):
+        e = json.loads(line)
+        if e.get("type") == "work":
+            worked[e["project"], e["method"]].add(e["agent"])
+            first.setdefault((e["project"], e["method"]), e)
+    return {(p, m, seed): bool(e["iso_ok"]) for (p, m), e in first.items()
+            if deps.get((p, m)) and not any(e["agent"] in worked[p, d] for d in deps[p, m])}
 
 
 def measure_items(paths) -> dict:
@@ -126,7 +147,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("kind", choices=("forum", "measure"))
     ap.add_argument("paths", nargs="+", help="forum: condition directories; measure: rows.jsonl files (globs ok)")
-    ap.add_argument("--items", default="cross", choices=("cross", "all"), help="forum items")
+    ap.add_argument("--items", default="cross", choices=("cross", "all", "first"), help="forum items")
     ap.add_argument("--ref", help="compare every condition with this one only")
     ap.add_argument("--only", help="measure: comma-separated substrings; keep conditions containing any")
     ap.add_argument("--boot", type=int, default=4000)

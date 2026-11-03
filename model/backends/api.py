@@ -51,7 +51,10 @@ class APIBackend(Backend):
                     raise
             time.sleep(2 ** attempt)
 
-    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
+    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE,
+             prefix=""):
+        if prefix:
+            raise ValueError("an API takes messages, not rendered text; use --backend hf")
         if latents or any(LATENT_RE.search(m["content"]) for m in messages):
             raise ValueError("the api backend cannot read latent posts; use --backend hf")
         data = self._post({"model": self.model, "messages": messages, "max_tokens": max_new_tokens,

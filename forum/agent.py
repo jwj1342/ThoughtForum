@@ -5,6 +5,7 @@ import ast
 import random
 import re
 
+from benchmark import secret_tasks as S
 from benchmark.evaluate import hidden, run
 from benchmark.sandbox import TestResult
 from benchmark.tasks import private_skeleton
@@ -201,6 +202,10 @@ class Agent:
         report = P.REPORT.format(name=st.name, result=vis.brief()) + (P.DECEIVE.format(name=st.name) if deceive else "") \
             + (P.MISLEAD.format(name=st.name) if mislead else "")
         rep_msgs = msgs + [{"role": "assistant", "content": reply}, {"role": "user", "content": report}]
+        if self.overclaim and cfg.overclaim_mode == "false_format" and st.name in self.ctx.project.meta.get("formats", {}):
+            body = S.report(self.ctx.project, st.name, "lie", self.attempt).split("\n", 1)[1]
+            text = f"STATUS: {'DONE' if vis.ok else 'PARTIAL'}\n{body}"
+            return rep_msgs, text, parse_status(text), False
         rep = self._llm(rep_msgs, latents, "report", {"subtask": st, "visible_ok": vis.ok, "pressure": self.overclaim}, 160)
         text, claimed, falsified = rep.text, parse_status(rep.text), False
         if self.overclaim and cfg.overclaim_mode == "always" and claimed != "DONE":

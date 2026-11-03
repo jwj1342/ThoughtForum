@@ -69,6 +69,7 @@ flowchart BT
 - `training/reader.py`、`training/writer.py`、`training/secret.py`：分别对应 E1a、E1w、E1s。`training.secret --steps 0` 就是对本方法本身做离线 SecretBench 评测。
 - `analysis/` 下的分析脚本：
   - `stats.py`：主要的统计工具。按项目聚类的 bootstrap 置信区间，同一批条目上的配对差值、精确 McNemar 检验和 Holm 校正；离线测量和论坛的输出都能读；
+  - `breakdown.py`：拆开一个通过率：各消费者、委托率、代码和回答里的真假标签、代价；论坛里的重试和 DONE 比例；
   - `tables.py`：论坛条件的项目级指标对比表；
   - `paired.py`：配对符号检验（`stats.py` 也用它）；
   - `linprobe.py`：线性探针；

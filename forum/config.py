@@ -35,7 +35,10 @@ CHOICES = {
     # DONE message whatever the test said, so a hidden failure leaves no trace in the text itself.
     # mislead: claims stay honest, but the message misstates the method's interface or output format,
     # plausibly and specifically (a saboteur; tests whether a latent post follows words or knowledge).
-    "overclaim_mode": ("always", "pressure", "deceive", "mislead"),
+    # The model mostly fails to do so: such reports still state the true tag 91% of the time (R23).
+    # false_format: the harness writes a producer's report, stating a false format (SecretBench); the
+    # STATUS line stays true, so the author retries like an honest one. Only its words change.
+    "overclaim_mode": ("always", "pressure", "deceive", "mislead", "false_format"),
     "choose": ("llm", "greedy"),
     # full: every agent sees all docstrings. private: an agent sees only the docstring of the method it
     # works on; the others show just their signatures, so callers must learn interfaces from the forum.

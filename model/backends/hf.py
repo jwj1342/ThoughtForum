@@ -95,9 +95,10 @@ class HFBackend(Backend):
 
     # ---- generation -------------------------------------------------------------------
     @torch.no_grad()
-    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
+    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE,
+             prefix=""):
         """Sampling with top-p 0.95 and top-k 20 (Qwen3's defaults), or greedy at temperature 0."""
-        emb = self.embed_chat(messages, latents)
+        emb = self.embed(prefix + self.render(messages), latents)
         sample = temperature > 0
         gc = GenerationConfig(max_new_tokens=max_new_tokens, eos_token_id=self.model.generation_config.eos_token_id,
                               pad_token_id=self.tok.pad_token_id or self.tok.eos_token_id,

@@ -17,6 +17,9 @@ Channels:
 - kv: each post is its author's KV cache, written on its own; a reader's posts are laid end to end.
 - stream: the posts are written into one shared KV stream, each on top of the ones before it
   (KVStream); a reader generates after the segments of its posts.
+- turns: the control for kv and stream. The same sessions as plain tokens before the reader's prompt,
+  which is the stream reader's prompt, with no cache and no latent. A KV cache is a forward pass over
+  these tokens, so what turns reaches is not owed to the channel being latent.
 
 `--load M` gives every reader M posts: those of its producers plus posts of other projects, in a
 random order. `--transplant` adds, for the honest speech and the latent channels, a control in which
@@ -48,8 +51,8 @@ from benchmark.secretbench import CONSUMERS, PRODUCERS, make_project
 from forum import prompts as P
 
 log = logging.getLogger("measure")
-CHANNELS = ("none", "full_spec", "text", "artifact", "session", "latent", "kv", "stream")
-TEXTS = ("text", "artifact", "session")
+CHANNELS = ("none", "full_spec", "text", "artifact", "session", "latent", "kv", "stream", "turns")
+TEXTS = ("text", "artifact", "session", "turns")
 LATENTS = ("latent", "kv", "stream")
 
 
@@ -60,7 +63,8 @@ class Post:
         self.project, self.producer = project, producer
         self.report = report(project, producer, speech, k)
         self.context = producer_context(project, producer, self.report)
-        self.text = {"artifact": artifact(project, producer), "session": P.transcript(self.context)}.get(channel, self.report)
+        whole = P.transcript(self.context)
+        self.text = {"artifact": artifact(project, producer), "session": whole, "turns": whole}.get(channel, self.report)
         self.payload = writer.write(self.context[:-1], self.report) if channel in ("latent", "kv") else None
         self.label = project   # the class its head names; under transplant, the reader's own
 
@@ -73,7 +77,10 @@ def reader(backend, channel, posts, stream=None, qualified=False):
     Heads name the method as the forum does; `qualified` adds the class (posts of several projects)."""
     heads = [P.post_head(t, f"agent{t + 1}", f"{q.label.class_name}.{q.producer}" if qualified else q.producer)
              for t, q in enumerate(posts)]
-    block = forum_block(channel, list(zip(heads, [q.text for q in posts])))
+    block = forum_block("stream" if channel == "turns" else channel, list(zip(heads, [q.text for q in posts])))
+    if channel == "turns":
+        prefix = "".join(backend.render(q.context, add_generation_prompt=False) for q in posts)
+        return (lambda msgs, n, **kw: backend.chat(msgs, max_new_tokens=n, prefix=prefix, **kw)), block, 0
     if channel == "stream":
         prefix = stream.prefix([q.payload for q in posts])
         return (lambda msgs, n, **kw: stream.chat(prefix, msgs, max_new_tokens=n, **kw)), block, getattr(prefix, "k", 0)

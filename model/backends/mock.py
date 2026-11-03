@@ -27,10 +27,14 @@ class MockBackend(Backend):
     def reseed(self, seed: int):
         self.seed = seed
 
-    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE):
+    def render(self, messages, add_generation_prompt=True):
+        return "\n".join(m["content"] for m in messages)
+
+    def chat(self, messages, latents=(), *, purpose="", meta=None, max_new_tokens=512, temperature=TEMPERATURE,
+             prefix=""):
         meta = meta or {}
         n_lat = sum(len(LATENT_RE.findall(m["content"])) for m in messages)
-        n_prompt = sum(self.count_tokens(m["content"]) for m in messages) + 16 * n_lat
+        n_prompt = sum(self.count_tokens(m["content"]) for m in messages) + 16 * n_lat + self.count_tokens(prefix)
         if purpose == "choose":
             text = meta["options"][0]
         elif purpose == "implement":

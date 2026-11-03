@@ -43,7 +43,9 @@ class Backend:
     reads_latents = True
 
     def chat(self, messages: list[dict], latents: list[Latent] = (), *, purpose: str = "",
-             meta: dict | None = None, max_new_tokens: int = 512, temperature: float = TEMPERATURE) -> Generation:
+             meta: dict | None = None, max_new_tokens: int = 512, temperature: float = TEMPERATURE,
+             prefix: str = "") -> Generation:
+        """`prefix` is rendered text placed before the rendered messages (earlier sessions, as plain tokens)."""
         raise NotImplementedError
 
     def count_tokens(self, text: str) -> int:
