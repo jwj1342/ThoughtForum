@@ -3,6 +3,7 @@
 # 200 SecretBench projects (1000 consumer items), 3 sampling seeds; every channel under every speech
 # (honest / omit / lie), with the transplant control for the latent channels; no posts (the floor) and
 # the full spec (the ceiling); the sessions as plain tokens before the reader's prompt (the control for kv and stream).
+# stream, turns and session draw the same random post order, so their items pair exactly (R25).
 # One array task per (seed, channel): task t runs seed t / 9 and channel CHANNELS[t % 9].
 # Run from the repo root:  sbatch --array=0-26 experiments/offline.sh
 # Then:  python -m analysis.stats measure "runs/offline_<id>/*/rows.jsonl" --ref "honest/text/load0"

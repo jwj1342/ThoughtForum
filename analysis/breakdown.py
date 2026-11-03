@@ -4,7 +4,7 @@
     python -m analysis.breakdown forum runs/forum_<id>/*/*/*/
 
 - measure: by consumer, the pass rate and the share of first answers that call forbidden methods;
-  by condition, the share of code with the true and the falsely stated tag, what a reader answers when
+  by the post written first, the pass rate; by condition, the share of code with the true and the falsely stated tag, what a reader answers when
   asked what a producer returns (by tag: an exact match would mostly measure the answer's format; a
   session-text reader answers in the author's "STATUS: ..." style), prompt tokens and post size.
 - forum: the retries behind a pass rate (posts, rounds, share of DONE claims), first-attempt
@@ -46,6 +46,21 @@ def label(r) -> str:
     return f"{r['speech']}/{r['channel']}/load{r['load']}"
 
 
+def order_table(rows) -> list[str]:
+    """Pass rate by the producer whose post was written first, in the channels that shuffle them."""
+    g = defaultdict(list)
+    for r in rows:
+        if r.get("first") and not r["transplant"]:
+            for scope in ("all", r["consumer"]):
+                g[label(r), r["first"], scope].append(r["ok"])
+    if not g:
+        return []
+    out = ["", "| condition | scope | encode first | export first |", "|---|---|---|---|"]
+    for k, scope in sorted({(k, s) for k, _, s in g}):
+        out.append(f"| {k} | {scope} | {mean(g[k, 'encode', scope]):.3f} | {mean(g[k, 'export', scope]):.3f} |")
+    return out
+
+
 def measure_tables(rows) -> str:
     rows = [r for r in rows if not r["transplant"]]
     groups = defaultdict(list)
@@ -60,6 +75,7 @@ def measure_tables(rows) -> str:
             rs = [r for r in groups[k] if n in (None, r["consumer"])]
             cells.append(f"{mean([r['ok'] for r in rs]):.3f} ({mean([bool(r['delegated']) for r in rs]):.3f})")
         lines.append(f"| {k} | " + " | ".join(cells) + " |")
+    lines += order_table(rows)
     tags = probe_tags(rows)
     lines += ["", "| condition | code: true tag | code: false tag | asked: true tag | asked: false tag | prompt tokens | post MB |",
               "|---|---|---|---|---|---|---|"]

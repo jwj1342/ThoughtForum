@@ -53,6 +53,8 @@ from forum import prompts as P
 log = logging.getLogger("measure")
 CHANNELS = ("none", "full_spec", "text", "artifact", "session", "latent", "kv", "stream", "turns")
 TEXTS = ("text", "artifact", "session", "turns")
+# Order matters to a reader (R25): these channels show a reader its posts in the order they were written.
+SAME_ORDER = ("stream", "turns", "session")
 LATENTS = ("latent", "kv", "stream")
 
 
@@ -67,6 +69,7 @@ class Post:
         self.text = {"artifact": artifact(project, producer), "session": whole, "turns": whole}.get(channel, self.report)
         self.payload = writer.write(self.context[:-1], self.report) if channel in ("latent", "kv") else None
         self.label = project   # the class its head names; under transplant, the reader's own
+        self.rank = 0          # its place in the order the posts were written (SAME_ORDER channels)
 
     def nbytes(self, channel):
         return len(self.text.encode()) if channel in TEXTS else getattr(self.payload, "nbytes", 0)
@@ -75,11 +78,13 @@ class Post:
 def reader(backend, channel, posts, stream=None, qualified=False):
     """(chat, forum block, KV entries the reader attends to) for a reader that gets `posts` through `channel`.
     Heads name the method as the forum does; `qualified` adds the class (posts of several projects)."""
+    if channel == "session":
+        posts = sorted(posts, key=lambda q: q.rank)
     heads = [P.post_head(t, f"agent{t + 1}", f"{q.label.class_name}.{q.producer}" if qualified else q.producer)
              for t, q in enumerate(posts)]
     block = forum_block("stream" if channel == "turns" else channel, list(zip(heads, [q.text for q in posts])))
     if channel == "turns":
-        prefix = "".join(backend.render(q.context, add_generation_prompt=False) for q in posts)
+        prefix = "".join(backend.render(q.context, add_generation_prompt=False) for q in sorted(posts, key=lambda q: q.rank))
         return (lambda msgs, n, **kw: backend.chat(msgs, max_new_tokens=n, prefix=prefix, **kw)), block, 0
     if channel == "stream":
         prefix = stream.prefix([q.payload for q in posts])
@@ -133,11 +138,14 @@ def run_project(backend, i, projects, sp, ch, transplant, a, writers, rng):
     others = [j for j in range(len(projects)) if j != i]
     distract = [Post(projects[j], rng.choice(PRODUCERS), speech, j + a.seed, ch, writers.get(ch))
                 for j in rng.sample(others, max(0, a.load - 1))] if a.load else []
-    stream = None
-    if ch == "stream":   # one stream per project: its posts and the distractors, written in a random order
-        from model.writers import make_stream
+    if ch in SAME_ORDER:   # a project's posts and the distractors, written in a random order
         order = list(own.values()) + distract
         rng.shuffle(order)
+        for r, q in enumerate(order):
+            q.rank = r
+    stream = None
+    if ch == "stream":     # one stream per project
+        from model.writers import make_stream
         stream = make_stream(backend)
         for q in order:
             q.payload = stream.append(q.context[:-1], q.report)
@@ -176,6 +184,7 @@ def run_project(backend, i, projects, sp, ch, transplant, a, writers, rng):
         rows.append({
             "project": p.pid, "consumer": name, "speech": sp, "channel": ch, "transplant": transplant,
             "load": a.load, "seed": a.seed, "ok": bool(ok), "delegated": delegated,
+            "first": min(own, key=lambda d: own[d].rank) if ch in SAME_ORDER else None,
             "known": share(code, tags(p, deps, lambda pr, d: pr.meta["formats"][d])),
             "said": share(code, tags(p, deps, lambda pr, d: stated(pr, d, sp))) if sp == "lie" else None,
             "other": share(code, tags(src, deps, lambda pr, d: pr.meta["formats"][d])) if transplant else None,
@@ -245,7 +254,8 @@ def main(argv=None):
     rows = []
     with open(os.path.join(a.out, "rows.jsonl"), "w") as f:
         for sp, ch, transplant in conds:
-            rng = random.Random(f"{a.seed}-{sp}-{ch}-{transplant}")
+            # SAME_ORDER channels draw the same orders and distractors, so their items pair exactly
+            rng = random.Random(f"{a.seed}-{sp}-{'stream' if ch in SAME_ORDER else ch}-{transplant}")
             backend.reseed(a.seed)
             for i in range(len(projects)):
                 for r in run_project(backend, i, projects, sp, ch, transplant, a, writers, rng):

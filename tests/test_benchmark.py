@@ -173,6 +173,32 @@ class TestSecretBench(unittest.TestCase):
         from analysis.breakdown import measure_tables
         self.assertIn("honest/turns/load0", measure_tables(rows))
 
+    def test_same_order_channels_share_their_orders(self):
+        _, rows = self._measure("--n", "6", "--channel", "session,stream,turns,text", "--speech", "honest")
+        firsts = {ch: [r["first"] for r in rows if r["channel"] == ch and not r["transplant"]] for ch in ("session", "stream", "turns")}
+        self.assertEqual(firsts["stream"], firsts["turns"])
+        self.assertEqual(firsts["stream"], firsts["session"])
+        self.assertEqual(set(firsts["stream"]), {"encode", "export"})
+        self.assertTrue(all(r["first"] is None for r in rows if r["channel"] == "text"))
+
+    def test_session_and_turns_read_posts_in_written_order(self):
+        from benchmark import measure
+        from benchmark.secretbench import make_project
+        from model.backends.mock import MockBackend
+        p = make_project(0, 0, 4)
+        backend = MockBackend(p_correct=0.5)
+        seen = {}
+        backend.chat = lambda msgs, n=None, **kw: seen.update(kw)
+        for ch in ("session", "turns"):
+            enc, exp = (measure.Post(p, d, "honest", 0, ch, None) for d in ("encode", "export"))
+            enc.rank, exp.rank = 1, 0      # export was written first
+            chat, block, _ = measure.reader(backend, ch, [enc, exp])
+            chat([], 1)
+            if ch == "session":
+                self.assertLess(block.index("`export`"), block.index("`encode`"))
+            else:
+                self.assertLess(seen["prefix"].index("`export`"), seen["prefix"].index("`encode`"))
+
     def test_false_format_changes_only_the_words(self):
         """In the forum the harness writes a lying producer's report; its STATUS line stays true and it retries."""
         import contextlib
